@@ -13,7 +13,7 @@ Stark Enterprises Workbench: Work, School (Educational, Media, Arcade), the Assi
 3. Workbench gets its own window, a Start menu entry and a taskbar icon.
 
 **Android**
-- Install the Workbench APK (built from this site with PWABuilder), or
+- Install the Workbench APK. To build it, enter `https://tonystarkofficial1111-web.github.io/Workbench/install.html` at pwabuilder.com (the small install page loads instantly; the APK opens the full app), or
 - open the address in Chrome → **⋮ → Add to Home screen → Install**.
 
 ## Updates
