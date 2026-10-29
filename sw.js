@@ -1,6 +1,6 @@
 // Workbench service worker: keeps a copy of the app on this device so it opens offline, and
 // fetches the newest version from GitHub Pages whenever there is a connection.
-const CACHE = "workbench-app-v2";
+const CACHE = "workbench-app-v3";
 const SHELL = ["./index.html", "./install.html", "./manifest.webmanifest", "./icons/icon-192.png", "./icons/icon-512.png", "./icons/icon-maskable-512.png", "./icons/favicon-32.png"];
 
 self.addEventListener("install", (e) => {
@@ -43,6 +43,42 @@ self.addEventListener("fetch", (e) => {
       } catch {
         return saved;
       }
+    })(),
+  );
+});
+
+// Phone notifications from the Workbench Hub on the rig (reminders, follow-ups, money to
+// collect), even when Workbench is closed. If Workbench is open on screen, it shows its own
+// banner instead. Tapping a notification opens the job or customer it's about.
+self.addEventListener("push", (e) => {
+  let m = {};
+  try {
+    m = e.data ? e.data.json() : {};
+  } catch {
+    m = { title: "Workbench", body: e.data ? e.data.text() : "" };
+  }
+  e.waitUntil(
+    (async () => {
+      const wins = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+      const seen = wins.find((c) => c.visibilityState === "visible");
+      if (seen) return seen.postMessage({ type: "wb-push", msg: m });
+      await self.registration.showNotification(m.title || "Workbench", { body: m.body || "", tag: m.tag || "wb", data: { open: m.open || "" }, icon: "icons/icon-192.png", badge: "icons/favicon-32.png" });
+    })(),
+  );
+});
+self.addEventListener("notificationclick", (e) => {
+  e.notification.close();
+  const open = (e.notification.data && e.notification.data.open) || "";
+  e.waitUntil(
+    (async () => {
+      const wins = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+      const w = wins.find((c) => c.url.startsWith(self.registration.scope)) || wins[0];
+      if (w) {
+        await w.focus();
+        if (open) w.postMessage({ type: "wb-open", open });
+        return;
+      }
+      await self.clients.openWindow(self.registration.scope + (open ? "#open=" + encodeURIComponent(open) : ""));
     })(),
   );
 });
