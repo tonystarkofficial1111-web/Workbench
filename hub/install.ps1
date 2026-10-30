@@ -72,6 +72,25 @@ if ($cfg -and $cfg.root) {
 }
 $Root = (Get-Content $Conf -Raw | ConvertFrom-Json).root
 
+# your own big folder of everything, read where it is
+$cfgNow = Get-Content $Conf -Raw | ConvertFrom-Json
+if (-not ($cfgNow.libraries -and @($cfgNow.libraries).Count -gt 0)) {
+  Write-Host ""
+  Say "  Got a big folder of your own stuff (music, videos, photos, everything)? Workbench reads it"
+  Say "  where it is - nothing is moved or copied - and picks out the music and videos by their folder"
+  Say "  names and file types. Photo folders, programs and everything else are left alone."
+  $big = Ask "  Its full path, like D:\My Stuff (or press Enter to skip; you can add folders later in Workbench)" ""
+  if ($big -and (Test-Path -LiteralPath $big -PathType Container)) {
+    $full = (Resolve-Path -LiteralPath $big).Path
+    $lib = [ordered]@{ path = $full; kind = "auto"; everyone = $false; label = (Split-Path $full -Leaf) }
+    $cfgNow | Add-Member -NotePropertyName libraries -NotePropertyValue @($lib) -Force
+    [IO.File]::WriteAllText($Conf, ($cfgNow | ConvertTo-Json -Depth 6), (New-Object System.Text.UTF8Encoding($false)))
+    Say ("  Workbench will read " + $full) White
+  } elseif ($big) {
+    Say "  That folder wasn't found. Add it later in Workbench: the bell > Hub > Folders on the rig." Yellow
+  }
+}
+
 # ---- 4. the owner
 Step "4/7" "You, the owner"
 $env:WB_HUB_HOME = $HubHome

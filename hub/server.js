@@ -17,7 +17,7 @@ const http = require("http"),
   { readTags } = require("./tags.js"),
   { __wbReminders } = require("./reminders.js");
 
-const VERSION = "1.0.0";
+const VERSION = "1.1.0";
 const HOME = process.env.WB_HUB_HOME || path.join(__dirname, "..");
 const CONF = process.env.WB_HUB_CONFIG || path.join(HOME, "hub.json");
 const APP = "https://tonystarkofficial1111-web.github.io";
@@ -309,17 +309,52 @@ function backupWork(text) {
 }
 
 // ---- music and videos --------------------------------------------------------------------------
+// Each person's own Music and Videos folders, the Shared ones, and folders the owner adds from
+// anywhere on the rig (a big folder of everything, a second drive later). Those are read where
+// they are: nothing is moved or copied. In a mixed folder ("auto") Workbench picks out what it
+// needs by folder names and file types: songs from music-looking folders (or anything that is
+// clearly a song), videos, and it skips photo folders, program folders and tiny sound effects.
 const EXT = { music: /\.(mp3|m4a|aac|flac|wav|ogg|oga|opus|weba|aif|aiff)$/i, video: /\.(mp4|m4v|webm|mov|mkv|ogv)$/i };
 const FOLDER = { music: "Music", video: "Videos" };
+const SKIP_DIR = /^(\$recycle\.bin|system volume information|windows|program files( \(x86\))?|programdata|appdata|node_modules|\.git|\.hub|temp|tmp|cache|caches|steamapps|xboxgames|recovery|perflogs)$/i;
+const PHOTO_DIR = /(^|[\s_.-])(photos?|pictures?|pics|imgs?|images?|camera|camera roll|dcim|screenshots?|wallpapers?|fotos?|im[aá]genes|selfies)($|[\s_.-])/i;
+const MUSIC_DIR = /(^|[\s_.-])(music|songs?|audio|mp3s?|tracks?|beats?|albums?|playlists?|dj|m[uú]sica|canciones|mixes|remixes|instrumentals?)($|[\s_.-])/i;
+const VIDEO_DIR = /(^|[\s_.-])(videos?|v[ií]deos|movies?|films?|clips?|shows?|series|pel[ií]culas|tv|anime|recordings?)($|[\s_.-])/i;
+// what a folder looks like it holds, from its own name or the nearest parent with a telling name
+function folderHint(names) {
+  for (let i = names.length - 1; i >= 0; i--) {
+    if (PHOTO_DIR.test(names[i])) return "photo";
+    if (MUSIC_DIR.test(names[i])) return "music";
+    if (VIDEO_DIR.test(names[i])) return "video";
+  }
+  return "";
+}
+// which list a file belongs in, in a mixed folder (or null to leave it out)
+function autoKind(name, size, hint) {
+  if (hint === "photo") return null;
+  if (EXT.music.test(name)) return hint === "music" || size >= 1.2e6 ? "music" : null;
+  if (EXT.video.test(name)) return size >= 1e6 ? "video" : null;
+  return null;
+}
 let tagCache = null,
   tagT = 0;
-const listCache = new Map();
+const libCache = new Map();
+const libId = (p) => sha(String(p).toLowerCase()).slice(0, 8);
+function libraries() {
+  let L = [].concat(C.libraries || []).filter((l) => l && l.path);
+  for (const l of L) l.id = l.id || libId(l.path);
+  return L;
+}
+// the folders a person sees for one kind (music or video)
 function libsFor(u, kind) {
   const out = [
-    { scope: "u", dir: userDir(u, FOLDER[kind]), label: "Mine" },
-    { scope: "s", dir: path.join(C.root, "Shared", FOLDER[kind]), label: "Shared" },
+    { key: "u:" + u.id + ":" + kind, scope: "u", dir: userDir(u, FOLDER[kind]), mode: kind, label: "Mine" },
+    { key: "s:" + kind, scope: "s", dir: path.join(C.root, "Shared", FOLDER[kind]), mode: kind, label: "Shared" },
   ];
-  (C.libraries || []).forEach((l, i) => l && l.path && (l.kind || "music") === kind && (l.everyone || u.role === "owner") && out.push({ scope: "l" + i, dir: l.path, label: l.label || path.basename(l.path) }));
+  for (const l of libraries()) {
+    const mode = l.kind === "music" || l.kind === "video" ? l.kind : "auto";
+    if ((mode === kind || mode === "auto") && (l.everyone || u.role === "owner")) out.push({ key: "l:" + l.id, scope: "l" + l.id, dir: l.path, mode, label: l.label || path.basename(l.path) || l.path });
+  }
   return out;
 }
 function libDir(u, scope, kind) {
@@ -342,42 +377,207 @@ function tagsOf(file, st, name) {
   tagT = setTimeout(() => writeJson(hubf("cache/tags.json"), tagCache), 2000);
   return tagCache[k];
 }
-async function listMedia(u, kind) {
-  const ck = u.id + ":" + kind,
-    hit = listCache.get(ck);
-  if (hit && Date.now() - hit.t < 30000) return hit.items;
-  const items = [];
-  for (const L of libsFor(u, kind)) {
-    const walk = async (dir, rel, depth) => {
-      let ents;
+// one walk through a folder collects its music and its videos
+async function scanLib(L) {
+  const out = { music: [], video: [] };
+  const walk = async (dir, rel, names) => {
+    let ents;
+    try {
+      ents = await fsp.readdir(dir, { withFileTypes: !0 });
+    } catch {
+      return;
+    }
+    const hint = L.mode === "auto" ? folderHint(names) : "";
+    for (const e of ents) {
+      if (e.name.startsWith(".") || e.name.startsWith("~$")) continue;
+      const full = path.join(dir, e.name),
+        r = rel ? rel + "/" + e.name : e.name;
+      if (e.isDirectory()) {
+        if (names.length >= 14 || SKIP_DIR.test(e.name) || (L.mode === "auto" && PHOTO_DIR.test(e.name))) continue;
+        await walk(full, r, [...names, e.name]);
+        continue;
+      }
+      if (e.name.endsWith(".part")) continue;
+      const maybe = L.mode === "auto" ? EXT.music.test(e.name) || EXT.video.test(e.name) : EXT[L.mode].test(e.name);
+      if (!maybe) continue;
+      let st;
       try {
-        ents = await fsp.readdir(dir, { withFileTypes: !0 });
+        st = await fsp.stat(full);
       } catch {
-        return;
+        continue;
       }
-      for (const e of ents) {
-        if (e.name.startsWith(".") || e.name === "$RECYCLE.BIN" || e.name === "System Volume Information") continue;
-        const full = path.join(dir, e.name),
-          r = rel ? rel + "/" + e.name : e.name;
-        if (e.isDirectory()) depth < 12 && (await walk(full, r, depth + 1));
-        else if (EXT[kind].test(e.name) && !e.name.endsWith(".part")) {
-          let st;
-          try {
-            st = await fsp.stat(full);
-          } catch {
-            continue;
-          }
-          const t = kind === "music" ? tagsOf(full, st, e.name) : { title: e.name.replace(/\.[^.]+$/, "") };
-          items.push({ id: mediaId(kind, L.scope, r), name: e.name, title: t.title, artist: t.artist || "", album: t.album || "", bpm: t.bpm || 0, key: t.key || "", size: st.size, mtime: Math.floor(st.mtimeMs), type: typeOf(e.name), scope: L.scope, where: L.label, folder: rel });
-        }
-      }
-    };
-    await walk(L.dir, "", 0);
-  }
-  items.sort((a, b) => b.mtime - a.mtime);
-  listCache.set(ck, { t: Date.now(), items });
-  return items;
+      const kind = L.mode === "auto" ? autoKind(e.name, st.size, hint) : L.mode;
+      if (!kind) continue;
+      const t = kind === "music" ? tagsOf(full, st, e.name) : { title: e.name.replace(/\.[^.]+$/, "") };
+      out[kind].push({ id: mediaId(kind, L.scope, r), name: e.name, title: t.title, artist: t.artist || "", album: t.album || "", bpm: t.bpm || 0, key: t.key || "", size: st.size, mtime: Math.floor(st.mtimeMs), type: typeOf(e.name), scope: L.scope, where: L.label, folder: rel });
+    }
+  };
+  await walk(L.dir, "", []);
+  return out;
 }
+// a folder's list, from memory when it's recent (and refreshed in the background when older)
+async function libItems(L, kind) {
+  const c = libCache.get(L.key);
+  if (c && Date.now() - c.t > 60000 && !c.busy)
+    c.busy = scanLib(L)
+      .then((items) => libCache.set(L.key, { t: Date.now(), items }))
+      .catch(() => (c.busy = null));
+  if (c) return c.items[kind] || [];
+  const items = await scanLib(L);
+  libCache.set(L.key, { t: Date.now(), items });
+  return items[kind] || [];
+}
+const scanning = new Set();
+const forget = (u, kind) => (libCache.delete("u:" + u.id + ":" + kind), libCache.delete("s:" + kind));
+async function listMedia(u, kind) {
+  const items = [];
+  for (const L of libsFor(u, kind)) items.push(...(await libItems(L, kind)));
+  return items.sort((a, b) => b.mtime - a.mtime);
+}
+// folders on the rig, for the owner picking one from another device
+function drives() {
+  if (process.platform !== "win32") return ["/"];
+  const out = [];
+  for (let c = 67; c <= 90; c++) {
+    const d = String.fromCharCode(c) + ":\\";
+    try {
+      fs.statSync(d) && out.push(d);
+    } catch {}
+  }
+  return out;
+}
+function browse(p) {
+  if (!p) return { path: "", parent: null, dirs: drives().map((d) => ({ name: d, path: d })) };
+  const full = path.resolve(p);
+  let ents = [];
+  try {
+    ents = fs.readdirSync(full, { withFileTypes: !0 });
+  } catch (e) {
+    throw Object.assign(new Error("Can't open that folder on the rig."), { code: 400 });
+  }
+  const parent = path.dirname(full) === full ? "" : path.dirname(full);
+  return {
+    path: full,
+    parent,
+    dirs: ents
+      .filter((e) => e.isDirectory() && !e.name.startsWith(".") && !e.name.startsWith("$") && !/^(system volume information|recovery|perflogs)$/i.test(e.name))
+      .map((e) => ({ name: e.name, path: path.join(full, e.name) }))
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .slice(0, 500),
+  };
+}
+
+// ---- save from a link -----------------------------------------------------------------------------
+// A link to a music or video file (one you bought, free or Creative Commons music, a file in your
+// own Google Drive or Dropbox) is downloaded by the rig straight into your Music or Videos, so
+// big files keep going while your devices are off. Streaming sites are not downloaded from.
+const NO_RIP = /(^|\.)(youtube\.com|youtu\.be|youtube-nocookie\.com|googlevideo\.com|spotify\.com|scdn\.co|soundcloud\.com|sndcdn\.com|music\.apple\.com|tidal\.com|deezer\.com|tiktok\.com|instagram\.com|facebook\.com|fbcdn\.net|twitch\.tv|netflix\.com|primevideo\.com|disneyplus\.com|hulu\.com|pandora\.com|audiomack\.com)$/i;
+const TYPE_EXT = { "audio/mpeg": ".mp3", "audio/mp3": ".mp3", "audio/mp4": ".m4a", "audio/x-m4a": ".m4a", "audio/aac": ".aac", "audio/flac": ".flac", "audio/x-flac": ".flac", "audio/wav": ".wav", "audio/x-wav": ".wav", "audio/wave": ".wav", "audio/ogg": ".ogg", "audio/opus": ".opus", "audio/webm": ".weba", "video/mp4": ".mp4", "video/x-m4v": ".m4v", "video/webm": ".webm", "video/quicktime": ".mov", "video/x-matroska": ".mkv", "video/ogg": ".ogv" };
+const jobs = new Map();
+// share links that open a page turned into the file itself
+function directLink(u) {
+  const x = new URL(u);
+  if (/(^|\.)dropbox\.com$/i.test(x.hostname)) (x.searchParams.delete("dl"), x.searchParams.set("dl", "1"));
+  const g = /(^|\.)drive\.google\.com$/i.test(x.hostname) && (/\/file\/d\/([\w-]+)/.exec(x.pathname) || (x.searchParams.get("id") && [0, x.searchParams.get("id")]));
+  if (g) return "https://drive.usercontent.google.com/download?id=" + g[1] + "&export=download&confirm=t";
+  if (/(^|\.)1drv\.ms$|(^|\.)onedrive\.live\.com$/i.test(x.hostname) && !x.searchParams.has("download")) x.searchParams.set("download", "1");
+  return x.toString();
+}
+async function safeHost(x) {
+  if (!/^https?:$/.test(x.protocol)) throw new Error("Only http and https links can be saved.");
+  if (NO_RIP.test(x.hostname)) throw new Error("Workbench doesn't download from streaming sites like " + x.hostname.replace(/^www\./, "") + ". Use a direct link to a file you own.");
+  if (C.allowLocalFetch) return;
+  const addrs = await require("dns").promises.lookup(x.hostname, { all: !0 }).catch(() => {
+    throw new Error("Can't find " + x.hostname + ". Check the link.");
+  });
+  for (const a of addrs) if (/^(127\.|0\.|169\.254\.|::1$|fe80:|::ffff:127\.)/i.test(a.address)) throw new Error("That link points at the rig itself.");
+}
+function fileName(res, url, kind, type) {
+  let n = "";
+  const cd = res.headers.get("content-disposition") || "";
+  const m = /filename\*=(?:UTF-8'')?([^;]+)/i.exec(cd) || /filename="?([^";]+)"?/i.exec(cd);
+  if (m)
+    try {
+      n = decodeURIComponent(m[1].trim().replace(/^"|"$/g, ""));
+    } catch {
+      n = m[1];
+    }
+  if (!n)
+    try {
+      n = decodeURIComponent(new URL(url).pathname.split("/").filter(Boolean).pop() || "");
+    } catch {}
+  n = safeName(n) || (kind === "video" ? "Video" : "Song") + " " + new Date().toISOString().slice(0, 10);
+  if (!EXT[kind].test(n)) n = n.replace(/\.[a-z0-9]{2,5}$/i, "") + (TYPE_EXT[type] || (kind === "video" ? ".mp4" : ".mp3"));
+  return n;
+}
+async function runJob(job, u) {
+  job.state = "downloading";
+  const ctl = new AbortController();
+  job.cancel = () => ctl.abort();
+  let stall = setTimeout(() => ctl.abort(), 60000),
+    tmp = "";
+  try {
+    let url = directLink(job.url),
+      res = null;
+    for (let hop = 0; hop < 8; hop++) {
+      const x = new URL(url);
+      await safeHost(x);
+      res = await fetch(url, { redirect: "manual", signal: ctl.signal, headers: { "User-Agent": "WorkbenchHub/" + VERSION, Accept: "audio/*,video/*,*/*;q=0.5" } });
+      if (res.status >= 300 && res.status < 400 && res.headers.get("location")) {
+        url = new URL(res.headers.get("location"), url).toString();
+        continue;
+      }
+      break;
+    }
+    if (!res || !res.ok) throw new Error("The link answered " + (res ? res.status : "nothing") + ".");
+    const type = String(res.headers.get("content-type") || "").split(";")[0].trim().toLowerCase(),
+      cd = /filename\*?=(?:UTF-8'')?"?([^";]+)/i.exec(res.headers.get("content-disposition") || ""),
+      guess = (cd ? cd[1] : "") + " " + decodeURIComponent(new URL(url).pathname),
+      kind = job.to || (/^audio\//.test(type) ? "music" : /^video\//.test(type) ? "video" : /\.(mp3|m4a|aac|flac|wav|ogg|oga|opus|weba|aif|aiff)\b/i.test(guess) ? "music" : /\.(mp4|m4v|webm|mov|mkv|ogv)\b/i.test(guess) ? "video" : "");
+    if (/text\/html|application\/xhtml/.test(type)) throw new Error("That link opens a web page, not a file. Use the file's direct download link (it usually ends in .mp3 or .mp4).");
+    if (!kind) throw new Error("That isn't a music or video file (it's " + (type || "something else") + ").");
+    const name = fileName(res, url, kind, type),
+      base = job.shared ? path.join(C.root, "Shared", FOLDER[kind]) : userDir(u, FOLDER[kind]);
+    fs.mkdirSync(base, { recursive: !0 });
+    let dest = path.join(base, name),
+      n = 2;
+    while (fs.existsSync(dest)) dest = path.join(base, name.replace(/(\.[^.]+)$/, " (" + n++ + ")$1"));
+    Object.assign(job, { kind, name: path.basename(dest), total: +res.headers.get("content-length") || 0, got: 0 });
+    tmp = dest + ".part";
+    const ws = fs.createWriteStream(tmp);
+    for await (const chunk of res.body) {
+      clearTimeout(stall);
+      stall = setTimeout(() => ctl.abort(), 60000);
+      job.got += chunk.length;
+      if (!ws.write(chunk)) await new Promise((r) => ws.once("drain", r));
+    }
+    await new Promise((ok, bad) => (ws.end(ok), ws.on("error", bad)));
+    if (!job.got) throw new Error("The link gave an empty file.");
+    fs.renameSync(tmp, dest);
+    tmp = "";
+    job.state = "done";
+    job.mediaId = mediaId(kind, job.shared ? "s" : "u", path.basename(dest));
+    forget(u, kind);
+    log("Saved from a link:", job.name, "for", u.name);
+  } catch (e) {
+    job.state = "error";
+    job.err = e.name === "AbortError" ? (job.cancelled ? "Stopped." : "The download stalled. Try again.") : e.message;
+    tmp && fs.rmSync(tmp, { force: !0 });
+  } finally {
+    clearTimeout(stall);
+    job.at = Date.now();
+    delete job.cancel;
+    broadcast({ type: "media", job: job.id, state: job.state }, (c) => c.user.id === u.id);
+    nextJob(u);
+  }
+}
+function nextJob(u) {
+  const mine = [...jobs.values()].filter((j) => j.user === u.id);
+  if (mine.filter((j) => j.state === "downloading").length >= 2) return;
+  const q = mine.find((j) => j.state === "queued");
+  q && runJob(q, u);
+}
+const jobView = (j) => ({ id: j.id, url: j.url, name: j.name, kind: j.kind, got: j.got, total: j.total, state: j.state, err: j.err, mediaId: j.mediaId || "", at: j.at });
 
 // ---- notifications -----------------------------------------------------------------------------
 const subject = () => (C.origins && C.origins[0]) || APP;
@@ -699,7 +899,7 @@ async function route(req, res) {
           f = base && inside(base, m.rel);
         if (!f) return fail(res, 403, "You can only remove your own files.");
         await fsp.rm(f, { force: !0 });
-        listCache.clear();
+        libCache.clear();
         return json(res, 200, { ok: !0 });
       }
       break;
@@ -722,9 +922,87 @@ async function route(req, res) {
         n = 2;
       while (fs.existsSync(dest)) dest = path.join(base, name.replace(/(\.[^.]+)$/, " (" + n++ + ")$1"));
       const size = await receive(req, dest);
-      listCache.clear();
+      forget(u, kind);
       return json(res, 200, { size, id: mediaId(kind, shared ? "s" : "u", path.basename(dest)) });
     }
+    case "/api/media/fetch": {
+      if (M !== "POST") break;
+      const b = await jsonBody(req, 2e4);
+      let x;
+      try {
+        x = new URL(String(b.url || "").trim());
+      } catch {
+        return fail(res, 400, "Paste the whole link, starting with https://");
+      }
+      try {
+        await safeHost(x);
+      } catch (e) {
+        return fail(res, 400, e.message);
+      }
+      const job = { id: id36(), user: u.id, url: x.toString(), to: b.to === "music" || b.to === "video" ? b.to : "", shared: b.to === "shared" && owner, name: "", kind: "", got: 0, total: 0, state: "queued", err: "", at: Date.now() };
+      jobs.set(job.id, job);
+      for (const [k, j] of jobs) if (j.user === u.id && j.state !== "queued" && j.state !== "downloading" && Date.now() - j.at > 6 * 3600000) jobs.delete(k);
+      nextJob(u);
+      return json(res, 200, { job: jobView(job) });
+    }
+    case "/api/media/jobs": {
+      if (M === "DELETE") {
+        const j = jobs.get(url.searchParams.get("id"));
+        if (j && j.user === u.id) j.state === "downloading" ? ((j.cancelled = !0), j.cancel && j.cancel()) : jobs.delete(j.id);
+        return json(res, 200, { ok: !0 });
+      }
+      return json(res, 200, { jobs: [...jobs.values()].filter((j) => j.user === u.id).sort((a, b) => b.at - a.at).slice(0, 30).map(jobView) });
+    }
+    // ---- folders on the rig (the owner adds them; nothing is moved or copied)
+    case "/api/libraries": {
+      if (!owner) return fail(res, 403, "Only the owner can choose the rig's folders.");
+      if (M === "POST") {
+        const b = await jsonBody(req, 2e4),
+          p = path.resolve(String(b.path || ""));
+        let st = null;
+        try {
+          st = fs.statSync(p);
+        } catch {}
+        if (!b.path || !st || !st.isDirectory()) return fail(res, 400, "That folder isn't on the rig.");
+        if (libraries().some((l) => path.resolve(l.path).toLowerCase() === p.toLowerCase())) return fail(res, 400, "That folder is already in the list.");
+        C.libraries = libraries().concat([{ id: libId(p), path: p, kind: b.kind === "music" || b.kind === "video" ? b.kind : "auto", everyone: !!b.everyone, label: String(b.label || path.basename(p) || p).slice(0, 60) }]);
+        writeJson(CONF, C);
+        log("Added folder", p);
+      } else if (M === "DELETE") {
+        C.libraries = libraries().filter((l) => l.id !== url.searchParams.get("id"));
+        writeJson(CONF, C);
+        libCache.clear();
+      } else if (M === "PATCH") {
+        const b = await jsonBody(req, 2e4),
+          l = libraries().find((x) => x.id === b.id);
+        if (!l) return fail(res, 404, "No such folder.");
+        "everyone" in b && (l.everyone = !!b.everyone);
+        C.libraries = libraries().map((x) => (x.id === l.id ? l : x));
+        writeJson(CONF, C);
+      }
+      const out = [];
+      // a folder nobody has looked through yet is looked through now, in the background
+      for (const L of libsFor(u, "music").concat(libsFor(u, "video"))) {
+        if (!L.key.startsWith("l:") || libCache.has(L.key) || scanning.has(L.key)) continue;
+        scanning.add(L.key);
+        scanLib(L)
+          .then((items) => libCache.set(L.key, { t: Date.now(), items }))
+          .catch(() => {})
+          .finally(() => scanning.delete(L.key));
+      }
+      for (const l of libraries()) {
+        let exists = !1;
+        try {
+          exists = fs.statSync(l.path).isDirectory();
+        } catch {}
+        const c = libCache.get("l:" + l.id);
+        out.push({ id: l.id, path: l.path, kind: l.kind || "auto", everyone: !!l.everyone, label: l.label || path.basename(l.path), exists, music: c ? c.items.music.length : null, video: c ? c.items.video.length : null });
+      }
+      return json(res, 200, { libraries: out });
+    }
+    case "/api/browse":
+      if (!owner) return fail(res, 403, "Only the owner can look through the rig's folders.");
+      return json(res, 200, browse(url.searchParams.get("path") || ""));
     // ---- notifications
     case "/api/push/key":
       return json(res, 200, { key: VAPID.pub });
@@ -795,4 +1073,4 @@ function main() {
   setInterval(checkUpdate, 6 * 3600000);
 }
 if (require.main === module) main();
-module.exports = { route, setup, C, addUser, checkReminders, makeDigest, VERSION };
+module.exports = { route, setup, C, addUser, checkReminders, makeDigest, directLink, folderHint, autoKind, VERSION };

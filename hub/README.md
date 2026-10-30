@@ -16,6 +16,8 @@ Every device runs Workbench and keeps in step with the Hub by itself:
 - **Phone notifications:** follow-ups, due jobs and money to collect arrive even when the app is closed.
 - **The AI:** Ollama runs on the rig's graphics card for every device.
 
+**The full step-by-step guide, with tick boxes:** https://tonystarkofficial1111-web.github.io/Workbench/hub/guide.html
+
 ## Setting it up (about 20 minutes, once)
 
 ### 1. Tailscale on the rig
@@ -70,6 +72,21 @@ You can add music and videos in two ways:
 To play them:
 - **Anywhere:** Media → **Rig library**. Press play to stream from the rig, or **Keep** to download onto this device for offline. On a laptop with room to spare you can keep a whole library.
 - **For DJing:** Work → DJ → Library → **Rig library**. The tracks play on whichever computer is DJing.
+
+### Your own big folder
+Got one folder with everything in it? Give its path to the installer, or add it later from any device: bell → Hub → **Folders on the rig** → **Add a folder…**, then click through the rig's drives to it.
+
+- **Nothing is moved or copied:** it's read where it is, and new files show up by themselves.
+- **What it picks out:** music and videos, by their folder names (Music, Songs, DJ, Videos, Movies…) and file types.
+- **What it leaves alone:** photo and camera folders, programs and tiny sound effects.
+
+### Save from a link
+In Media → Rig library → **Save from a link**, paste a link to an MP3 or MP4:
+- a file you own
+- free or Creative Commons music
+- a file in your own Google Drive or Dropbox
+
+The rig downloads it into your Music or Videos, even while your devices are off. Streaming sites (YouTube, Spotify, SoundCloud…) aren't downloaded from.
 
 ### 8. Move the AI off the laptop
 1. On every device: bell → Hub → **Use the rig's AI here**.
