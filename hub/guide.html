@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Set up the rig</title>
-<meta name="description" content="Step by step: the AI, the Workbench Hub and Workbench on the computer that stays on at home.">
+<meta name="description" content="From nothing to everything: the rig, the AI, the Workbench Hub, your music on every device.">
 <style>
 :root{--bg:#101114;--panel:#17191e;--panel2:#1d2026;--line:#ffffff1f;--line2:#ffffff38;--text:#eef1f5;--muted:#9aa2ae;--dim:#6d7480;--acc:#7dffa8;--warn:#ffcc66;--bad:#ff7d8c;--font:Inter,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;--head:"Space Grotesk",Inter,system-ui,"Segoe UI",sans-serif}
 :root[data-theme="light"]{--bg:#f4f5f7;--panel:#fff;--panel2:#f0f1f4;--line:#0000001a;--line2:#00000030;--text:#14161a;--muted:#555c66;--dim:#7a818c;--acc:#0f8a46;--warn:#9a6500;--bad:#b3261e}
@@ -46,6 +46,8 @@ th{font:700 11px var(--head);letter-spacing:.12em;text-transform:uppercase;color
 .bar i b{position:absolute;inset:0 auto 0 0;background:var(--acc);width:0}
 .bar button{font:inherit;color:var(--muted);background:none;border:1px solid var(--line2);padding:4px 8px;cursor:pointer}
 @media (prefers-color-scheme:light){:root:not([data-theme="dark"]){--bg:#f4f5f7;--panel:#fff;--panel2:#f0f1f4;--line:#0000001a;--line2:#00000030;--text:#14161a;--muted:#555c66;--dim:#7a818c;--acc:#0f8a46;--warn:#9a6500;--bad:#b3261e}}
+.step-sub{display:block;margin:6px 0 0;color:var(--muted);font-size:14px}
+.chk{display:inline-block;font:700 11px var(--head);letter-spacing:.1em;text-transform:uppercase;color:var(--acc);border:1px solid var(--acc);padding:1px 6px;margin-left:4px}
 </style>
 </head>
 <body>
@@ -53,124 +55,162 @@ th{font:700 11px var(--head);letter-spacing:.12em;text-transform:uppercase;color
 <main>
 <div class="k">Workbench · the rig</div>
 <h1>Set up the rig</h1>
-<p class="lead">Everything runs at home on the rig, the computer that stays on: the AI (Ollama), the Workbench Hub and your files. Your other devices reach it through Tailscale, at home or away. Tick each step as you go. Your ticks are remembered on this device.</p>
-<nav class="toc"><a href="#a">A · Prepare</a><a href="#b">B · Tailscale</a><a href="#c">C · Hub + AI</a><a href="#d">D · Check the AI</a><a href="#e">E · Big folder</a><a href="#f">F · Laptop</a><a href="#g">G · Phone</a><a href="#h">H · Monitor off</a><a href="#i">If something's wrong</a></nav>
+<p class="lead">From nothing to everything: the rig at home runs the AI, the Workbench Hub and holds all your music and videos. Your laptop and phone reach it through Tailscale, at home or away, and can keep songs for offline.</p>
+<nav class="toc"><a href="#start">Start here</a><a href="#a">A · Prepare</a><a href="#b">B · Tailscale</a><a href="#c">C · Big folder</a><a href="#d">D · Hub + AI</a><a href="#e">E · Check AI</a><a href="#f">F · Laptop</a><a href="#g">G · Phone</a><a href="#h">H · Music</a><a href="#i">I · Leave it on</a><a href="#fix">Fixes</a></nav>
+<section id="start">
+<h2><span>0</span> Start here</h2>
+<p class="why">You need about two hours in total, most of it waiting for downloads and copying. Do the parts in order: each one needs the one before.</p>
+<ul class="flat">
+<li>The <b>rig</b> (the computer that stays on), with the monitor, keyboard and mouse plugged in for now, and internet.</li>
+<li>An account to sign in to Tailscale on every device (a Google account is easiest).</li>
+<li>Your <b>laptop</b> and your <b>phone</b> nearby, and a USB cable for the phone.</li>
+<li>Anything with music on it: old drives, USB sticks, the phone.</li>
+<li>Paper or your phone's notes for three things you'll write down: the <b>Hub address</b>, your <b>name</b> and your <b>PIN</b>.</li>
+</ul>
+<div class="note">Tick each step as you go; your ticks are remembered on this device.</div>
+</section>
 
 <section id="a">
 <h2><span>A</span> Prepare the rig</h2>
-<p class="why">About 10 minutes. Do this with the monitor plugged in.</p>
+<p class="why">About 20 minutes. Do everything on the rig with the monitor, keyboard and mouse plugged in. Plug it into the router with a network cable if you can; it is faster and steadier than Wi-Fi.</p>
 <ol class="steps">
-<li><input type="checkbox"><div class="t"><b>Update Windows.</b> Start → Settings → Windows Update → <b>Check for updates</b>. Install everything and restart if it asks. Repeat until it says you're up to date.</div></li>
-<li><input type="checkbox"><div class="t"><b>Update the graphics driver.</b> Open the <b>NVIDIA App</b> (or GeForce Experience) → Drivers → install the latest <b>Game Ready</b> driver. If you have neither, get the driver from nvidia.com/drivers: pick GeForce, your card's series and model, and Windows 10/11. The AI needs a recent driver to use the graphics card.</div></li>
-<li><input type="checkbox"><div class="t"><b>Let it sign back in after updates.</b> Settings → Accounts → Sign-in options → turn on <b>Use my sign-in info to automatically finish setting up after an update</b>. The Hub starts when Windows signs in, so this keeps it running after update restarts.</div></li>
-<li><input type="checkbox"><div class="t"><b>Never sleep.</b> Settings → System → Power &amp; battery → Screen and sleep → set <b>When plugged in, put my device to sleep after</b> to <b>Never</b>. The screen can still turn off; that's fine. (The Hub installer sets this too.)</div></li>
-<li><input type="checkbox"><div class="t"><b>Optional: come back on after a power cut.</b> When the rig starts, press <kbd>Del</kbd> or <kbd>F2</kbd> to open the BIOS → Advanced → APM Configuration → <b>Restore AC Power Loss</b> → <b>Power On</b> → save and exit (<kbd>F10</kbd>). Menu names vary a little between boards.</div></li>
+<li><input type="checkbox"><div class="t"><b>Sign in to Windows</b> on the rig with the account you will leave it on. Everything below is installed for that account.</div></li>
+<li><input type="checkbox"><div class="t"><b>Update Windows.</b> Click <b>Start</b> → <b>Settings</b> (the gear) → <b>Windows Update</b> (left side, at the bottom) → <b>Check for updates</b>. Let it download and install everything, and click <b>Restart now</b> when it asks. After the restart, go back and press <b>Check for updates</b> again. Repeat until it says <b>You're up to date</b>.</div></li>
+<li><input type="checkbox"><div class="t"><b>Update the graphics driver.</b> Click <b>Start</b>, type <code>NVIDIA</code> and open the <b>NVIDIA App</b> (or <b>GeForce Experience</b>). Go to <b>Drivers</b> → <b>Download</b> → <b>Express installation</b>. If neither is installed: open a browser, go to <b>nvidia.com/drivers</b>, choose <b>GeForce</b>, your card's series and model, and your Windows version, then <b>Find</b> → <b>Download</b>, and run the file with the default choices. Restart the rig when it's done. The AI needs this to use the graphics card.</div></li>
+<li><input type="checkbox"><div class="t"><b>Let it sign back in after updates.</b> <b>Settings</b> → <b>Accounts</b> → <b>Sign-in options</b> → scroll down → turn on <b>Use my sign-in info to automatically finish setting up after an update</b>. The Hub starts when Windows signs in, so this keeps it running after update restarts.</div></li>
+<li><input type="checkbox"><div class="t"><b>Never sleep.</b> <b>Settings</b> → <b>System</b> → <b>Power &amp; battery</b> (or <b>Power</b>) → <b>Screen and sleep</b> → set <b>When plugged in, put my device to sleep after</b> to <b>Never</b>. The screen turning off is fine. (The Hub installer also does this.)</div></li>
+<li><input type="checkbox"><div class="t"><b>Optional: turn back on after a power cut.</b> Restart the rig and, as soon as it starts, tap <kbd>Del</kbd> (or <kbd>F2</kbd>) until the BIOS opens. Look under <b>Advanced</b> → <b>APM Configuration</b> (or <b>Power</b>) for <b>Restore AC Power Loss</b> and set it to <b>Power On</b>. Press <kbd>F10</kbd> → <b>Yes</b> to save. Names differ a little between boards; skip this if you can't find it.</div></li>
 </ol>
 </section>
 
 <section id="b">
 <h2><span>B</span> Tailscale on the rig</h2>
-<p class="why">Tailscale links your own devices privately, so your phone and laptop can reach the rig from anywhere. Nothing is opened to the internet. It's free.</p>
+<p class="why">About 10 minutes. Tailscale links your own devices privately, so your laptop and phone reach the rig from anywhere, at home or away. Nothing is opened to the internet, and it is free. Do this before the Hub installer: the installer uses it.</p>
 <ol class="steps">
-<li><input type="checkbox"><div class="t">On the rig, go to <b>tailscale.com/download</b> → <b>Download for Windows</b> → run the installer → <b>Install</b>.</div></li>
-<li><input type="checkbox"><div class="t">The Tailscale icon appears in the tray (bottom right, near the clock; click <b>^</b> if you don't see it). Click it → <b>Log in</b>. Sign in with the account you'll use everywhere, for example Google. Use this <b>same account</b> on every device.</div></li>
-<li><input type="checkbox"><div class="t"><b>Give the rig a short name.</b> In a browser open <b>login.tailscale.com/admin/machines</b> → find the rig → <b>⋯</b> → <b>Edit machine name</b> → type <code>rig</code> → Update. Your address will then start with <code>rig.</code></div></li>
-<li><input type="checkbox"><div class="t"><b>Turn on secure addresses.</b> Open <b>login.tailscale.com/admin/dns</b>. Make sure <b>MagicDNS</b> is on, then scroll to <b>HTTPS Certificates</b> → <b>Enable HTTPS</b> → confirm. The installable app needs this https address.</div></li>
+<li><input type="checkbox"><div class="t">On the rig, open a browser, go to <b>tailscale.com/download</b> and click <b>Download Tailscale for Windows</b>. Open the downloaded file and click <b>Install</b>. If Windows asks <b>Do you want to allow this app to make changes</b>, click <b>Yes</b>.</div></li>
+<li><input type="checkbox"><div class="t">A Tailscale icon appears at the bottom right, near the clock (click the <b>^</b> arrow if you don't see it). Click it → <b>Log in</b>. A browser page opens: sign in with the account you'll use on <b>every</b> device, for example your Google account. Click <b>Connect</b> if it asks. The icon now shows you're connected.</div></li>
+<li><input type="checkbox"><div class="t"><b>Name the rig.</b> In the browser go to <b>login.tailscale.com/admin/machines</b>. Find the rig in the list → click the <b>⋯</b> at the end of its row → <b>Edit machine name…</b> → turn off <b>Auto-generate from OS hostname</b> if it's there → type <code>rig</code> → <b>Update name</b>.</div></li>
+<li><input type="checkbox"><div class="t"><b>Turn on secure addresses.</b> Go to <b>login.tailscale.com/admin/dns</b>. Check that <b>MagicDNS</b> is on (click <b>Enable MagicDNS</b> if you see it). Scroll down to <b>HTTPS Certificates</b> → <b>Enable HTTPS</b> → confirm. Write down the name shown on that page (it looks like <code>tail1234.ts.net</code>).</div></li>
 </ol>
 </section>
 
 <section id="c">
-<h2><span>C</span> Install the Hub and the AI</h2>
-<p class="why">One installer does it all: the Hub, starting with Windows, the tray icon, the AI (Ollama) and its model. About 15 minutes, mostly downloading.</p>
+<h2><span>C</span> Make your big folder and fill it</h2>
+<p class="why">As long as it takes to copy your files. Put all your music and videos into one folder on the rig. Workbench reads it where it is: nothing is moved or copied again, and anything you add later shows up by itself.</p>
+<div class="note">Inside <b>Everything</b> you can organise however you like (by artist, album, playlist…). Keep songs inside a folder named <b>Music</b> (or Songs, Audio, Beats, DJ) and videos inside <b>Videos</b> (or Movies, Clips). Folders named Photos, Pictures, Camera, DCIM or Screenshots are skipped, and so are programs and tiny sound effects.</div>
 <ol class="steps">
-<li><input type="checkbox"><div class="t">On the rig, open <b>tonystarkofficial1111-web.github.io/Workbench/hub/WorkbenchHub.zip</b>. It downloads to your Downloads folder.</div></li>
-<li><input type="checkbox"><div class="t">Open Downloads → right-click <b>WorkbenchHub.zip</b> → <b>Extract All…</b> → <b>Extract</b>. A folder opens with the Hub's files.</div></li>
-<li><input type="checkbox"><div class="t">Open the <b>WorkbenchHub</b> folder and double-click <b>Install Workbench Hub</b>. If a blue box says <b>Windows protected your PC</b>, click <b>More info</b>, then <b>Run anyway</b>. A black window opens and asks a few questions; type the answer and press <kbd>Enter</kbd> each time.</div></li>
-<li><input type="checkbox"><div class="t"><b>1/7 Node.js</b> downloads by itself (about 30 MB). Nothing to answer.</div></li>
-<li><input type="checkbox"><div class="t"><b>3/7 Where to keep everything:</b> it lists your drives and how much space each has, and suggests a folder. Press <kbd>Enter</kbd> to accept it, or type one like <code>D:\Workbench Hub</code>. This folder will hold Work, design files, everyone's own music and videos, and saves.</div></li>
-<li><input type="checkbox"><div class="t"><b>Your big folder:</b> it then asks for your own big folder of everything. Type its full path, like <code>D:\My Stuff</code>, and press <kbd>Enter</kbd>. You can also press <kbd>Enter</kbd> to skip and add it later (part E). To copy a folder's path: open it in File Explorer, click the address bar at the top, and copy what's there. Paste into the black window with a right-click.</div></li>
-<li><input type="checkbox"><div class="t"><b>4/7 You, the owner:</b> type your name, then a PIN of 4 to 12 digits, twice. Nothing shows while you type the PIN; that's normal. You'll sign in with this name and PIN on every device.</div></li>
-<li><input type="checkbox"><div class="t"><b>5/7 Start with Windows:</b> done for you. The Hub now starts by itself.</div></li>
-<li><input type="checkbox"><div class="t"><b>6/7 Tailscale:</b> it shares the Hub on your tailnet. If Tailscale shows a link saying HTTPS or Serve isn't enabled, open that link, press <b>Enable</b>, and the installer continues by itself. Then it shows <b>Your Hub's address</b>, like <code>https://rig.tail1234.ts.net</code>, and copies it. <b>Write this address down</b>; you'll type it on your other devices.</div></li>
-<li><input type="checkbox"><div class="t"><b>7/7 The AI:</b> it asks <b>Install Ollama now…? (Y/N)</b>. Type <code>Y</code> → <kbd>Enter</kbd>. Ollama downloads (about 1 GB) and installs by itself; a llama icon appears in the tray. Next it asks <b>Download the AI model llama3.1:8b…? (Y/N)</b>. Type <code>Y</code> → <kbd>Enter</kbd>. This is about 5 GB, so give it a while; you'll see a progress bar. It fits a graphics card with 8 GB.</div></li>
-<li><input type="checkbox"><div class="t">At the end it says <b>THE HUB IS RUNNING</b>, with your folder and address. Press any key to close the window. You'll see the Workbench Hub icon in the tray. Hover over it and it should say <b>Workbench Hub - Online</b>.</div></li>
+<li><input type="checkbox"><div class="t"><b>Pick the drive.</b> Press <kbd>Win</kbd> + <kbd>E</kbd> to open File Explorer and click <b>This PC</b> on the left. Each drive shows how much space is free. Use the one with the most free space (often <b>D:</b>; use <b>C:</b> if that's the only one).</div></li>
+<li><input type="checkbox"><div class="t"><b>Make the folder.</b> Double-click that drive. Right-click an empty spot → <b>New</b> → <b>Folder</b>, type <code>Everything</code> and press <kbd>Enter</kbd>. Double-click <b>Everything</b>, then make two folders inside it the same way: <code>Music</code> and <code>Videos</code>. You now have, for example, <code>D:\Everything\Music</code> and <code>D:\Everything\Videos</code>.</div></li>
+<li><input type="checkbox"><div class="t"><b>From an old drive or a USB stick:</b> plug it into the rig. It appears under <b>This PC</b>. Open it, open the folder with your songs, press <kbd>Ctrl</kbd> + <kbd>A</kbd> to select everything, then <kbd>Ctrl</kbd> + <kbd>C</kbd>. Open <b>Everything\Music</b> and press <kbd>Ctrl</kbd> + <kbd>V</kbd>. Wait for the copy window to finish. Do the same with videos into <b>Everything\Videos</b>.</div></li>
+<li><input type="checkbox"><div class="t"><b>From an Android phone with a USB cable:</b> unlock the phone and plug it into the rig. On the phone, pull down from the top and tap the <b>Charging this device via USB</b> notice → choose <b>File transfer</b> (or <b>Transferring files</b>). On the rig, in File Explorer under <b>This PC</b>, open the phone → <b>Internal storage</b> → open <b>Music</b> (also look in <b>Download</b>). Select the songs, copy them, and paste them into <b>Everything\Music</b>. If the phone doesn't appear, try another cable: some cables only charge.</div></li>
+<li><input type="checkbox"><div class="t"><b>From the laptop:</b> copy the songs onto a USB stick and do step 3, or wait until part F, where you can send them over from the laptop instead.</div></li>
+<li><input type="checkbox"><div class="t"><b>Check the formats.</b> These play everywhere: <b>MP3, M4A/AAC, FLAC, WAV, OGG, Opus</b> (music) and <b>MP4, WEBM, MOV, MKV</b> (videos). <b>WMA</b> files don't play in browsers. To convert them, install VLC (videolan.org), then <b>Media</b> → <b>Convert / Save</b> → <b>Add</b> the files → <b>Convert / Save</b> → Profile <b>Audio - MP3</b> → <b>Start</b>. Songs bought or downloaded inside Spotify or Apple Music are locked to those apps and can't be copied.</div></li>
+<li><input type="checkbox"><div class="t"><b>Copy the folder's path for later.</b> Open <b>Everything</b>, click the address bar at the top of the window so it shows the full path (like <code>D:\Everything</code>), and write it down. You'll type or paste it in the installer.</div></li>
 </ol>
-<div class="note">You don't need the OLLAMA_ORIGINS or OLLAMA_HOST settings on the rig. The Hub talks to the AI on the rig itself and hands it to your devices, so leave those unset there.</div>
 </section>
 
 <section id="d">
-<h2><span>D</span> Check the AI works on the graphics card</h2>
+<h2><span>D</span> Install the Hub and the AI</h2>
+<p class="why">About 20 minutes, mostly downloading. One installer does it all: the Hub, starting it with Windows, its tray icon, the AI (Ollama) and the AI model. A black window asks questions; type the answer and press <kbd>Enter</kbd> each time.</p>
+<div class="note">On the rig you don't need the OLLAMA_ORIGINS or OLLAMA_HOST settings. The Hub talks to the AI on the rig itself and shares it with your devices.</div>
 <ol class="steps">
-<li><input type="checkbox"><div class="t">Press Start, type <b>PowerShell</b>, open <b>Windows PowerShell</b>.</div></li>
-<li><input type="checkbox"><div class="t">Type this and press <kbd>Enter</kbd>:<pre>ollama run llama3.1:8b</pre>Wait for <code>&gt;&gt;&gt;</code>, which takes 10 to 30 seconds the first time. Type <code>Say hi in Spanish</code> → <kbd>Enter</kbd>. It answers.</div></li>
-<li><input type="checkbox"><div class="t">Type <code>/bye</code> → <kbd>Enter</kbd>. Then type this and press <kbd>Enter</kbd>:<pre>ollama ps</pre>Under <b>PROCESSOR</b> it should say <b>100% GPU</b>, which means it's using the graphics card. If it says CPU, update the NVIDIA driver (part A, step 2) and restart the rig.</div></li>
-<li><input type="checkbox"><div class="t">If the installer couldn't install Ollama: go to <b>ollama.com/download</b> → <b>Download for Windows</b> → run <b>OllamaSetup.exe</b> → <b>Install</b>. Then in PowerShell run <code>ollama pull llama3.1:8b</code> and do steps 2 and 3 again.</div></li>
+<li><input type="checkbox"><div class="t">On the rig, open a browser and go to <b>tonystarkofficial1111-web.github.io/Workbench/hub/WorkbenchHub.zip</b>. It downloads to your <b>Downloads</b> folder.</div></li>
+<li><input type="checkbox"><div class="t">Open <b>Downloads</b> (<kbd>Win</kbd> + <kbd>E</kbd> → <b>Downloads</b> on the left) → right-click <b>WorkbenchHub.zip</b> → <b>Extract All…</b> → <b>Extract</b>. A new folder opens.</div></li>
+<li><input type="checkbox"><div class="t">Open the <b>WorkbenchHub</b> folder inside it and double-click <b>Install Workbench Hub</b>. If a blue box says <b>Windows protected your PC</b>, click <b>More info</b> → <b>Run anyway</b>. If it asks to allow changes, click <b>Yes</b>.</div></li>
+<li><input type="checkbox"><div class="t"><b>1/7 Node.js</b> and <b>2/7 The Hub program</b> install by themselves. Just wait.</div></li>
+<li><input type="checkbox"><div class="t"><b>3/7 Where to keep everything:</b> it lists your drives with their free space and suggests a folder in brackets. Press <kbd>Enter</kbd> to accept it, or type one like <code>D:\Workbench Hub</code> and press <kbd>Enter</kbd>. This is the Hub's own folder (Work, design files, saves, and songs you send it later); it's different from your big folder.</div></li>
+<li><input type="checkbox"><div class="t"><b>Your big folder:</b> it asks <b>Got a big folder of your own stuff?</b> Type the path from part C, step 7 (like <code>D:\Everything</code>) and press <kbd>Enter</kbd>. To paste instead, right-click inside the black window. It should say <b>Workbench will read D:\Everything</b>.</div></li>
+<li><input type="checkbox"><div class="t"><b>4/7 You, the owner:</b> type your name and press <kbd>Enter</kbd>. Then choose a PIN of 4 to 12 digits, press <kbd>Enter</kbd>, and type it again. Nothing shows while you type the PIN; that's normal. Write the name and PIN down: you sign in with them on every device.</div></li>
+<li><input type="checkbox"><div class="t"><b>5/7 Start with Windows</b> is done for you.</div></li>
+<li><input type="checkbox"><div class="t"><b>6/7 Tailscale:</b> it shares the Hub with your own devices. If Tailscale shows a link saying HTTPS or Serve isn't enabled, open that link, click <b>Enable</b>, and the installer carries on by itself. Then it prints <b>Your Hub's address</b>, like <code>https://rig.tail1234.ts.net</code>, and copies it. <b>Write this address down.</b></div></li>
+<li><input type="checkbox"><div class="t"><b>7/7 The AI:</b> it asks <b>Install Ollama now…? (Y/N)</b>. Type <code>Y</code> → <kbd>Enter</kbd>. Ollama downloads (about 1 GB) and installs; a llama icon appears near the clock. Then it asks <b>Download the AI model llama3.1:8b…? (Y/N)</b>. Type <code>Y</code> → <kbd>Enter</kbd>. It's about 5 GB; a progress bar shows.</div></li>
+<li><input type="checkbox"><div class="t">At the end it says <b>THE HUB IS RUNNING</b> with your folder and address. Press any key to close. Near the clock there's now a Workbench Hub icon; hover over it and it says <b>Workbench Hub - Online</b>.</div></li>
 </ol>
 </section>
 
 <section id="e">
-<h2><span>E</span> Your big folder</h2>
-<p class="why">Put everything in one folder on the rig, however you like. Workbench reads it where it is: nothing is moved or copied, and new files show up by themselves.</p>
-<table>
-<tr><th>What it finds</th><th>How</th></tr>
-<tr><td><b>Music</b></td><td>Audio files (MP3, M4A, FLAC, WAV…) in folders named like <code>Music</code>, <code>Songs</code>, <code>Audio</code>, <code>Beats</code>, <code>DJ</code>, <code>Música</code>, plus any audio file that's clearly a song (over ~1 MB) anywhere else.</td></tr>
-<tr><td><b>Videos</b></td><td>Video files (MP4, MOV, MKV, WEBM…) over 1 MB, for example in <code>Videos</code>, <code>Movies</code>, <code>Clips</code>.</td></tr>
-<tr><td><b>Left alone</b></td><td>Folders named like <code>Photos</code>, <code>Pictures</code>, <code>Camera</code>, <code>Camera Roll</code>, <code>DCIM</code>, <code>Screenshots</code> are skipped completely, even videos inside them. So are program folders and tiny sound effects. Photos and documents aren't picked up.</td></tr>
-</table>
+<h2><span>E</span> Check the AI uses the graphics card</h2>
+<p class="why">About 5 minutes.</p>
 <ol class="steps">
-<li><input type="checkbox"><div class="t">Tip: name the folders that hold your music <b>Music</b> (or Songs, DJ…) and your videos <b>Videos</b> (or Movies…). Any layout inside them works.</div></li>
-<li><input type="checkbox"><div class="t">If you skipped it in the installer, add it later from any device once you're signed in (part F): <b>the bell</b> → <b>Hub</b> → <b>Folders on the rig</b> → <b>Add a folder…</b>. Click through the rig's drives to your folder → <b>Use this folder</b>. Tick <b>Family can see it too</b> only if it's for everyone.</div></li>
-<li><input type="checkbox"><div class="t">After a minute it shows how many songs and videos it found. They're in <b>Media → Rig library</b> and in Work → DJ → Library → <b>Rig library</b>.</div></li>
+<li><input type="checkbox"><div class="t">Click <b>Start</b>, type <code>PowerShell</code> and open <b>Windows PowerShell</b>.</div></li>
+<li><input type="checkbox"><div class="t">Type <code>ollama run llama3.1:8b</code> and press <kbd>Enter</kbd>. Wait for <code>&gt;&gt;&gt;</code> (10 to 30 seconds the first time). Type <code>Say hi in Spanish</code> → <kbd>Enter</kbd>. It answers.</div></li>
+<li><input type="checkbox"><div class="t">Type <code>/bye</code> → <kbd>Enter</kbd>. Then type <code>ollama ps</code> → <kbd>Enter</kbd>. Under <b>PROCESSOR</b> it should say <b>100% GPU</b>. If it says CPU, update the graphics driver (part A, step 3), restart the rig and check again.</div></li>
+<li><input type="checkbox"><div class="t">If the installer couldn't install Ollama: go to <b>ollama.com/download</b> → <b>Download for Windows</b> → run <b>OllamaSetup.exe</b> → <b>Install</b>. Then in PowerShell run <code>ollama pull llama3.1:8b</code> and do steps 2 and 3 again.</div></li>
 </ol>
 </section>
 
 <section id="f">
 <h2><span>F</span> The laptop</h2>
+<p class="why">About 15 minutes.</p>
 <ol class="steps">
-<li><input type="checkbox"><div class="t">Install Tailscale on the laptop (tailscale.com/download) and log in with the <b>same account</b> as the rig.</div></li>
-<li><input type="checkbox"><div class="t">Open Workbench → the <b>bell</b> at the top right → <b>Connect the Hub</b>. Type the address from part C (like <code>https://rig.tail1234.ts.net</code>), your name and PIN → <b>Connect</b>. If the browser asks to let the site reach devices on your network, choose <b>Allow</b>. Your Work goes up to the rig. The laptop's Work folder and its design files are copied up too.</div></li>
-<li><input type="checkbox"><div class="t">In the same window: <b>AI</b> → <b>Use the rig's AI here</b>. It should say this device now uses the AI on the rig.</div></li>
-<li><input type="checkbox"><div class="t">Try it: Work → the round chat button at the bottom right → ask <code>What should I do today?</code></div></li>
-<li><input type="checkbox"><div class="t"><b>Remove Ollama from the laptop</b> (it's not needed there any more): Settings → Apps → Installed apps → <b>Ollama</b> → ⋯ → <b>Uninstall</b>. Then open File Explorer, go to <code>C:\Users\&lt;your name&gt;</code>, and delete the <b>.ollama</b> folder (that's several GB of models). Also delete the two settings from before: Start → type <b>environment variables</b> → Edit environment variables for your account → select <b>OLLAMA_ORIGINS</b> → Delete, and the same for <b>OLLAMA_HOST</b> → OK.</div></li>
+<li><input type="checkbox"><div class="t">On the laptop go to <b>tailscale.com/download</b> → install it the same way as on the rig → click its icon → <b>Log in</b> with the <b>same account</b> as the rig.</div></li>
+<li><input type="checkbox"><div class="t"><b>Open Workbench the way you always do</b> (the file you open, or the app). If you already have Work in it, use this same one for the first connection so your Work goes up to the rig. To have an app that updates itself, you can also open <b>tonystarkofficial1111-web.github.io/Workbench</b> in Chrome or Edge and click the <b>Install</b> icon at the right of the address bar (in Edge: <b>⋯</b> → <b>Apps</b> → <b>Install this site as an app</b>). Once the Hub is connected, everything is the same in both.</div></li>
+<li><input type="checkbox"><div class="t">Click the <b>bell</b> at the top right → <b>Connect the Hub</b>. Fill in <b>Hub address</b> (from part D, like <code>https://rig.tail1234.ts.net</code>), <b>Your name</b> and <b>PIN</b>, and leave <b>This device</b> as it is (or type <code>Laptop</code>). Click <b>Connect</b>. If the browser asks to let the site reach devices on your network, click <b>Allow</b>. It says <b>Connected</b>, and your Work, design files and saves go up to the rig.</div></li>
+<li><input type="checkbox"><div class="t">In the same window, under <b>AI</b>, click <b>Use the rig's AI here</b>.</div></li>
+<li><input type="checkbox"><div class="t"><b>Check your big folder.</b> Scroll down to <b>Folders on the rig</b>. Your <b>Everything</b> folder is there with how many songs and videos it found (give it a minute). If it's not there, click <b>Add a folder…</b>, click through the rig's drives to <b>Everything</b> → <b>Use this folder</b>. Leave <b>Family can see it</b> off unless it's for everyone.</div></li>
+<li><input type="checkbox"><div class="t"><b>Send the laptop's own songs to the rig.</b> Click <b>Send music to the rig</b> (in the Hub window under <b>Music and videos</b>), or go to <b>Media</b> → <b>Rig library</b> → <b>Send to the rig</b>. Pick the songs: click the first, hold <kbd>Shift</kbd> and click the last to pick many, or press <kbd>Ctrl</kbd> + <kbd>A</kbd> for the whole folder → <b>Open</b>. A bar shows each song going up. They land in your Music on the rig.</div></li>
+<li><input type="checkbox"><div class="t">Try the AI: open <b>Work</b> → the round chat button at the bottom right → ask <code>What should I do today?</code></div></li>
+<li><input type="checkbox"><div class="t"><b>Only if you installed Ollama on the laptop before:</b> <b>Settings</b> → <b>Apps</b> → <b>Installed apps</b> → <b>Ollama</b> → <b>⋯</b> → <b>Uninstall</b>. Then in File Explorer go to <code>C:\Users\</code><i>your name</i> and delete the <b>.ollama</b> folder (several GB). Click <b>Start</b>, type <code>environment variables</code> → <b>Edit environment variables for your account</b> → select <b>OLLAMA_ORIGINS</b> → <b>Delete</b>, the same for <b>OLLAMA_HOST</b> → <b>OK</b>.</div></li>
 </ol>
 </section>
 
 <section id="g">
 <h2><span>G</span> The phone</h2>
+<p class="why">About 10 minutes.</p>
 <ol class="steps">
-<li><input type="checkbox"><div class="t">Install <b>Tailscale</b> from the Play Store, open it, log in with the same account and turn it on. Android asks to set up a VPN connection; press <b>OK</b>.</div></li>
-<li><input type="checkbox"><div class="t">Open the Workbench app → <b>bell</b> → <b>Connect the Hub</b> → address, name, PIN → <b>Connect</b>. Work comes over; open it with your Work PIN as usual.</div></li>
-<li><input type="checkbox"><div class="t"><b>Notifications on this device</b> → <b>Turn on</b> → <b>Allow</b>. Then press <b>Send a test</b>; a notification should arrive within a few seconds. If it doesn't, check Android Settings → Apps → Workbench → Notifications is on, and Battery is set to <b>Unrestricted</b>.</div></li>
-<li><input type="checkbox"><div class="t"><b>AI</b> → <b>Use the rig's AI here</b>.</div></li>
+<li><input type="checkbox"><div class="t">Open the <b>Play Store</b>, search <b>Tailscale</b> → <b>Install</b> → <b>Open</b> → <b>Get started</b> / <b>Log in</b> with the <b>same account</b>. When Android asks to set up a VPN connection, tap <b>OK</b>. Make sure the switch says <b>Connected</b>.</div></li>
+<li><input type="checkbox"><div class="t"><b>Install Workbench as an app.</b> In <b>Chrome</b> open <b>tonystarkofficial1111-web.github.io/Workbench</b> → tap <b>⋮</b> (top right) → <b>Add to Home screen</b> → <b>Install</b>. Open it from the new icon on your home screen.</div></li>
+<li><input type="checkbox"><div class="t">Tap the <b>bell</b> → <b>Connect the Hub</b> → type the <b>Hub address</b>, <b>Your name</b> and <b>PIN</b>, and <code>Phone</code> as <b>This device</b> → <b>Connect</b>. Your Work and saves come over.</div></li>
+<li><input type="checkbox"><div class="t">Under <b>Notifications on this device</b> → <b>Turn on</b> → <b>Allow</b>. Then <b>Send a test</b>; a notification arrives within seconds. If not: Android <b>Settings</b> → <b>Apps</b> → <b>Workbench</b> → <b>Notifications</b> on, and <b>Battery</b> → <b>Unrestricted</b>.</div></li>
+<li><input type="checkbox"><div class="t">Under <b>AI</b> → <b>Use the rig's AI here</b>.</div></li>
+<li><input type="checkbox"><div class="t"><b>Songs that are only on the phone:</b> <b>Media</b> → <b>Rig library</b> → <b>Send to the rig</b> → pick them (press and hold one, then tap the others to pick several) → <b>Select</b>. Or copy them with a cable as in part C, step 4.</div></li>
 </ol>
 </section>
 
 <section id="h">
-<h2><span>H</span> Unplug the monitor</h2>
+<h2><span>H</span> Your music on every device</h2>
+<p class="why">The same on the laptop and the phone.</p>
 <ol class="steps">
-<li><input type="checkbox"><div class="t">Leave the rig on and unplug the monitor. Everything keeps running.</div></li>
-<li><input type="checkbox"><div class="t">From your phone, the bell's small dot shows the rig: <b>green</b> = online. In the bell → Hub you'll see <b>Online · rig</b>.</div></li>
-<li><input type="checkbox"><div class="t">Family: in the Hub window, under <b>People</b>, add each person with their own PIN. On their device they install Tailscale (signed into your account, or you share the rig with their own account: Tailscale admin → Machines → rig → ⋯ → Share), then sign in to the Hub with their name and PIN.</div></li>
+<li><input type="checkbox"><div class="t">Open <b>Media</b> → <b>Rig library</b> (in the row of sections under the title) → <b>Music</b>. Every song on the rig is listed: your big folder, everything you've sent, and links you've saved. Use <b>Search the rig…</b> to find one.</div></li>
+<li><input type="checkbox"><div class="t">Tap <b>▷</b> on a song to play it from the rig, or <b>Play all</b>. It streams over Tailscale, at home or away.</div></li>
+<li><input type="checkbox"><div class="t"><b>For offline</b> (a flight, school, no signal): tap <b>Keep</b> on a song; it saves on that device and shows <b>✓ Here</b>. <b>Keep all here</b> saves everything; check the phone has room first (about 5 MB a song, so 1,000 songs ≈ 5 GB).</div></li>
+<li><input type="checkbox"><div class="t"><b>Adding more later:</b> copy new files into <b>Everything\Music</b> on the rig, or use <b>Send to the rig</b> from any device. They appear within a minute or so.</div></li>
+<li><input type="checkbox"><div class="t"><b>The DJ</b> sees them too: <b>Work</b> → <b>DJ</b> → <b>Library</b> → <b>Rig library</b>.</div></li>
+<li><input type="checkbox"><div class="t"><b>Spotify Wrapped:</b> only songs Spotify itself plays count. Next to a song, the green <b>Spotify</b> button pauses it here and opens it in Spotify (the app if you have it), so playing it there counts. It only finds songs that are on Spotify.</div></li>
 </ol>
-<div class="ok">That's it. The Hub updates itself from the Workbench site, keeps a daily copy of your Work data (90 days, in the Hub folder's hidden <code>.hub\backups</code>), and writes the AI's hourly summary on the graphics card.</div>
 </section>
 
 <section id="i">
-<h2>If something's wrong</h2>
+<h2><span>I</span> Leave it running</h2>
+<p class="why"></p>
+<div class="note">The Hub updates itself, keeps a daily copy of your Work (90 days, in the Hub folder's hidden <code>.hub\backups</code>), and writes the AI's hourly summary on the graphics card.</div>
+<ol class="steps">
+<li><input type="checkbox"><div class="t">Leave the rig on and unplug the monitor if you like. Everything keeps running.</div></li>
+<li><input type="checkbox"><div class="t">On your phone, the small dot on the bell is the rig: <b>green = online</b>. In the bell → <b>Hub</b> it says <b>Online · rig</b>.</div></li>
+<li><input type="checkbox"><div class="t"><b>Family:</b> on the laptop, bell → <b>Hub</b> → <b>People</b> → type their name and a PIN → <b>Add person</b>. On their device they install Tailscale and sign in with your account (or, in Tailscale's admin page → <b>Machines</b> → rig → <b>⋯</b> → <b>Share…</b>, share the rig with their own account), then connect the Hub with their name and PIN. They see only their own music unless you tick <b>Family can see it</b> on a folder.</div></li>
+</ol>
+</section>
+
+<section id="fix">
+<h2><span>?</span> If something's wrong</h2>
 <table>
 <tr><th>What you see</th><th>What to do</th></tr>
-<tr><td>"Can't reach the Hub"</td><td>Is Tailscale on, on this device? Is the rig on? On the rig, hover the Hub's tray icon: it should say Online. If not, right-click it → <b>Restart the Hub</b>.</td></tr>
-<tr><td>No Tailscale address shown at the end of the installer</td><td>Do part B, steps 2 to 4, then double-click <b>Install Workbench Hub</b> again. Running it again is safe and keeps your data.</td></tr>
-<tr><td>"The AI isn't running on the rig"</td><td>On the rig, start <b>Ollama</b> from the Start menu (it then starts with Windows). Check with part D.</td></tr>
-<tr><td>Forgot your PIN</td><td>On the rig, in the WorkbenchHub folder you extracted, double-click <b>reset-pin.bat</b>, type your name and a new PIN.</td></tr>
-<tr><td>Something odd happened</td><td>On the rig: right-click the Hub's tray icon → <b>Show the log</b>, and send me a photo of the last lines.</td></tr>
+<tr><td>"Can't reach the Hub"</td><td>Is Tailscale <b>Connected</b> on this device? Is the rig on? On the rig, hover the Hub's icon near the clock: it should say Online. If not, right-click it → <b>Restart the Hub</b>.</td></tr>
+<tr><td>No address at the end of the installer</td><td>Do part B again (steps 2 to 4), then double-click <b>Install Workbench Hub</b> again. Running it again is safe and keeps everything.</td></tr>
+<tr><td>The phone doesn't show up on the rig</td><td>Unlock the phone, pick <b>File transfer</b> in the USB notice, and try another cable.</td></tr>
+<tr><td>Songs don't show in Rig library</td><td>Wait a minute and reopen it. Check the bell → Hub → <b>Folders on the rig</b> shows a song count. Make sure the songs are inside a folder named Music (or Songs, Audio…) and are MP3, M4A, FLAC, WAV, OGG or Opus.</td></tr>
+<tr><td>A song won't play</td><td>It's probably WMA or a protected file; convert it as in part C, step 6.</td></tr>
+<tr><td><b>Keep</b> fails on the phone</td><td>The phone is out of room. Free some space, or keep fewer songs.</td></tr>
+<tr><td>"The AI isn't running on the rig"</td><td>On the rig, open <b>Ollama</b> from the Start menu (it then starts with Windows). Check with part E.</td></tr>
+<tr><td>Forgot your PIN</td><td>On the rig, in the <b>WorkbenchHub</b> folder you extracted, double-click <b>reset-pin.bat</b>, type your name and a new PIN.</td></tr>
+<tr><td>Anything else</td><td>On the rig, right-click the Hub's icon → <b>Show the log</b>, and send a photo of the last lines.</td></tr>
 </table>
-<p class="small">Workbench Hub · set-up guide · the address, name and PIN are yours alone. Don't post them anywhere.</p>
+<p class="small">Workbench Hub · set-up guide · your address, name and PIN are yours alone. Don't post them anywhere.</p>
 </section>
 </main>
 <script>
 (function(){
-  var KEY = "wb-rig-guide", boxes = Array.prototype.slice.call(document.querySelectorAll("ol.steps input[type=checkbox]")), st = {};
+  var KEY = "wb-rig-guide-2", boxes = Array.prototype.slice.call(document.querySelectorAll("ol.steps input[type=checkbox]")), st = {};
   try { st = JSON.parse(localStorage.getItem(KEY) || "{}") || {}; } catch (e) {}
   function draw(){
     var n = 0;
