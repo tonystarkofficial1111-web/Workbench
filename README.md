@@ -1,7 +1,7 @@
 # Workbench
 The all in one server
 
-Stark Enterprises Workbench: Work, School (Educational, Media, Arcade), the Assistant and more, in one app.
+Stark Enterprises Workbench: Work, Educational, Media, Arcade, the Assistant and more, in one app.
 
 **Open it:** https://tonystarkofficial1111-web.github.io/Workbench/
 

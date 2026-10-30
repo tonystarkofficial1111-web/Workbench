@@ -2,7 +2,7 @@
   "id": "./",
   "name": "Workbench",
   "short_name": "Workbench",
-  "description": "Stark Enterprises Workbench: Work, School, Media, Arcade and more. Works offline and updates itself.",
+  "description": "Stark Enterprises Workbench: Work, Educational, Media, Arcade and more. Works offline and updates itself.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
