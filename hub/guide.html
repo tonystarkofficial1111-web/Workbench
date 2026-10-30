@@ -56,7 +56,7 @@ th{font:700 11px var(--head);letter-spacing:.12em;text-transform:uppercase;color
 <div class="k">Workbench · the rig</div>
 <h1>Set up the rig</h1>
 <p class="lead">From nothing to everything: the rig at home runs the AI, the Workbench Hub and holds all your music and videos. Your laptop and phone reach it through Tailscale, at home or away, and can keep songs for offline.</p>
-<nav class="toc"><a href="#start">Start here</a><a href="#a">A · Prepare</a><a href="#b">B · Tailscale</a><a href="#c">C · Big folder</a><a href="#d">D · Hub + AI</a><a href="#e">E · Check AI</a><a href="#f">F · Laptop</a><a href="#g">G · Phone</a><a href="#h">H · Music</a><a href="#i">I · Leave it on</a><a href="#fix">Fixes</a></nav>
+<nav class="toc"><a href="#start">Start here</a><a href="#w">W · The app</a><a href="#a">A · Prepare</a><a href="#b">B · Tailscale</a><a href="#c">C · Big folder</a><a href="#d">D · Hub + AI</a><a href="#e">E · Check AI</a><a href="#f">F · Laptop</a><a href="#g">G · Phone</a><a href="#h">H · Music</a><a href="#i">I · Leave it on</a><a href="#fix">Fixes</a></nav>
 <section id="start">
 <h2><span>0</span> Start here</h2>
 <p class="why">You need about two hours in total, most of it waiting for downloads and copying. Do the parts in order: each one needs the one before.</p>
@@ -67,7 +67,22 @@ th{font:700 11px var(--head);letter-spacing:.12em;text-transform:uppercase;color
 <li>Anything with music on it: old drives, USB sticks, the phone.</li>
 <li>Paper or your phone's notes for three things you'll write down: the <b>Hub address</b>, your <b>name</b> and your <b>PIN</b>.</li>
 </ul>
+<div class="note"><b>Windows without a product key works fine for all of this.</b> You'll see "Activate Windows" in the corner and the Personalize settings (wallpaper, colours) are locked, but updates, apps, Tailscale, the Hub and the AI all work normally. Nothing in this guide needs activation.</div>
+<div class="note"><b>Windows 10 or 11?</b> Click Start → Settings → System → About and look at <b>Edition</b>. The steps are written for Windows 11; where Windows 10 is different, it's shown in brackets.</div>
 <div class="note">Tick each step as you go; your ticks are remembered on this device.</div>
+</section>
+
+<section id="w">
+<h2><span>W</span> Workbench as an app</h2>
+<p class="why">About 3 minutes. Do this on the rig now, and later on the laptop (part F) and the phone (part G). A downloaded Workbench file (like <b>Workbench_6_3_0.html</b>) opened in Chrome <b>can't</b> be installed as an app: Chrome only installs apps from a website. The app comes from the Workbench website instead. It's the same Workbench, always the newest version, it opens without internet once installed, and it gets its own window and icon.</p>
+<ol class="steps">
+<li><input type="checkbox"><div class="t">Open <b>Chrome</b>. Click the address bar at the top, type <code>tonystarkofficial1111-web.github.io/Workbench</code> and press <kbd>Enter</kbd>. <span class="step-sub">If it says 404, try it with a small w: <code>tonystarkofficial1111-web.github.io/workbench</code>.</span></div></li>
+<li><input type="checkbox"><div class="t">Wait until Workbench has fully opened. The first time it can take up to a minute: it's a big app. Click <b>I understand</b> if the notice shows.</div></li>
+<li><input type="checkbox"><div class="t"><b>Install it.</b> At the right end of the address bar, click the <b>install icon</b> (a small screen with a down arrow) → <b>Install</b>. If you don't see the icon: click <b>⋮</b> (top right of Chrome) → <b>Cast, save, and share</b> → <b>Install page as app…</b> → <b>Install</b>. (In older Chrome: <b>⋮</b> → <b>Install Workbench…</b>.) <span class="step-sub">In Edge: <b>⋯</b> → <b>Apps</b> → <b>Install this site as an app</b> → <b>Install</b>.</span></div></li>
+<li><input type="checkbox"><div class="t">Workbench opens in its own window, without Chrome's tabs and address bar. If Chrome asks whether to pin it to the taskbar or Start, say <b>Yes</b>. Otherwise right-click its icon on the taskbar → <b>Pin to taskbar</b>.</div></li>
+<li><input type="checkbox"><div class="t">From now on, open Workbench from that icon (or Start → type <code>Workbench</code>). You don't need the downloaded file any more; keep it as a spare or delete it. <span class="step-sub">Anything you did in the downloaded file stays in that file's copy. On the rig that's nothing yet, so there's nothing to move. On a device where you already have Work in the file, connect the Hub from the file first (part F, step 3), then open the app and connect it too: everything comes over from the rig.</span></div></li>
+<li><input type="checkbox"><div class="t">The app updates itself. Whenever it's online it quietly downloads the newest version, and you get it the next time you open the app (close it and open it again to get it straight away). The version number is in the bottom right corner.</div></li>
+</ol>
 </section>
 
 <section id="a">
@@ -75,10 +90,10 @@ th{font:700 11px var(--head);letter-spacing:.12em;text-transform:uppercase;color
 <p class="why">About 20 minutes. Do everything on the rig with the monitor, keyboard and mouse plugged in. Plug it into the router with a network cable if you can; it is faster and steadier than Wi-Fi.</p>
 <ol class="steps">
 <li><input type="checkbox"><div class="t"><b>Sign in to Windows</b> on the rig with the account you will leave it on. Everything below is installed for that account.</div></li>
-<li><input type="checkbox"><div class="t"><b>Update Windows.</b> Click <b>Start</b> → <b>Settings</b> (the gear) → <b>Windows Update</b> (left side, at the bottom) → <b>Check for updates</b>. Let it download and install everything, and click <b>Restart now</b> when it asks. After the restart, go back and press <b>Check for updates</b> again. Repeat until it says <b>You're up to date</b>.</div></li>
+<li><input type="checkbox"><div class="t"><b>Update Windows.</b> Click <b>Start</b> → <b>Settings</b> (the gear) → <b>Windows Update</b> (left side, at the bottom) → <b>Check for updates</b>. (Windows 10: Settings → <b>Update &amp; Security</b> → Windows Update.) Let it download and install everything, and click <b>Restart now</b> when it asks. After the restart, go back and press <b>Check for updates</b> again. Repeat until it says <b>You're up to date</b>.</div></li>
 <li><input type="checkbox"><div class="t"><b>Update the graphics driver.</b> Click <b>Start</b>, type <code>NVIDIA</code> and open the <b>NVIDIA App</b> (or <b>GeForce Experience</b>). Go to <b>Drivers</b> → <b>Download</b> → <b>Express installation</b>. If neither is installed: open a browser, go to <b>nvidia.com/drivers</b>, choose <b>GeForce</b>, your card's series and model, and your Windows version, then <b>Find</b> → <b>Download</b>, and run the file with the default choices. Restart the rig when it's done. The AI needs this to use the graphics card.</div></li>
-<li><input type="checkbox"><div class="t"><b>Let it sign back in after updates.</b> <b>Settings</b> → <b>Accounts</b> → <b>Sign-in options</b> → scroll down → turn on <b>Use my sign-in info to automatically finish setting up after an update</b>. The Hub starts when Windows signs in, so this keeps it running after update restarts.</div></li>
-<li><input type="checkbox"><div class="t"><b>Never sleep.</b> <b>Settings</b> → <b>System</b> → <b>Power &amp; battery</b> (or <b>Power</b>) → <b>Screen and sleep</b> → set <b>When plugged in, put my device to sleep after</b> to <b>Never</b>. The screen turning off is fine. (The Hub installer also does this.)</div></li>
+<li><input type="checkbox"><div class="t"><b>Let it sign back in after updates.</b> <b>Settings</b> → <b>Accounts</b> → <b>Sign-in options</b> → scroll down → turn on <b>Use my sign-in info to automatically finish setting up after an update</b>. (Windows 10: it's under <b>Privacy</b> on the same page, called <b>Use my sign-in info to automatically finish setting up my device after an update or restart</b>.) If you don't see it, skip it. The Hub starts when Windows signs in, so this keeps it running after update restarts.</div></li>
+<li><input type="checkbox"><div class="t"><b>Never sleep.</b> <b>Settings</b> → <b>System</b> → <b>Power &amp; battery</b> (or <b>Power</b>) → <b>Screen and sleep</b> → set <b>When plugged in, put my device to sleep after</b> to <b>Never</b>. (Windows 10: Settings → System → <b>Power &amp; sleep</b> → under Sleep, <b>When plugged in, PC goes to sleep after</b> → <b>Never</b>.) The screen turning off is fine. (The Hub installer also does this.)</div></li>
 <li><input type="checkbox"><div class="t"><b>Optional: turn back on after a power cut.</b> Restart the rig and, as soon as it starts, tap <kbd>Del</kbd> (or <kbd>F2</kbd>) until the BIOS opens. Look under <b>Advanced</b> → <b>APM Configuration</b> (or <b>Power</b>) for <b>Restore AC Power Loss</b> and set it to <b>Power On</b>. Press <kbd>F10</kbd> → <b>Yes</b> to save. Names differ a little between boards; skip this if you can't find it.</div></li>
 </ol>
 </section>
@@ -144,13 +159,13 @@ th{font:700 11px var(--head);letter-spacing:.12em;text-transform:uppercase;color
 <p class="why">About 15 minutes.</p>
 <ol class="steps">
 <li><input type="checkbox"><div class="t">On the laptop go to <b>tailscale.com/download</b> → install it the same way as on the rig → click its icon → <b>Log in</b> with the <b>same account</b> as the rig.</div></li>
-<li><input type="checkbox"><div class="t"><b>Open Workbench the way you always do</b> (the file you open, or the app). If you already have Work in it, use this same one for the first connection so your Work goes up to the rig. To have an app that updates itself, you can also open <b>tonystarkofficial1111-web.github.io/Workbench</b> in Chrome or Edge and click the <b>Install</b> icon at the right of the address bar (in Edge: <b>⋯</b> → <b>Apps</b> → <b>Install this site as an app</b>). Once the Hub is connected, everything is the same in both.</div></li>
+<li><input type="checkbox"><div class="t"><b>Open Workbench.</b> If you already have Work in the copy you've been using on the laptop (a downloaded file), open that one for this first connection so your Work goes up to the rig. Then install the app as in <b>part W</b> and connect it too (step 3 again); from then on just use the app.</div></li>
 <li><input type="checkbox"><div class="t">Click the <b>bell</b> at the top right → <b>Connect the Hub</b>. Fill in <b>Hub address</b> (from part D, like <code>https://rig.tail1234.ts.net</code>), <b>Your name</b> and <b>PIN</b>, and leave <b>This device</b> as it is (or type <code>Laptop</code>). Click <b>Connect</b>. If the browser asks to let the site reach devices on your network, click <b>Allow</b>. It says <b>Connected</b>, and your Work, design files and saves go up to the rig.</div></li>
 <li><input type="checkbox"><div class="t">In the same window, under <b>AI</b>, click <b>Use the rig's AI here</b>.</div></li>
 <li><input type="checkbox"><div class="t"><b>Check your big folder.</b> Scroll down to <b>Folders on the rig</b>. Your <b>Everything</b> folder is there with how many songs and videos it found (give it a minute). If it's not there, click <b>Add a folder…</b>, click through the rig's drives to <b>Everything</b> → <b>Use this folder</b>. Leave <b>Family can see it</b> off unless it's for everyone.</div></li>
 <li><input type="checkbox"><div class="t"><b>Send the laptop's own songs to the rig.</b> Click <b>Send music to the rig</b> (in the Hub window under <b>Music and videos</b>), or go to <b>Media</b> → <b>Rig library</b> → <b>Send to the rig</b>. Pick the songs: click the first, hold <kbd>Shift</kbd> and click the last to pick many, or press <kbd>Ctrl</kbd> + <kbd>A</kbd> for the whole folder → <b>Open</b>. A bar shows each song going up. They land in your Music on the rig.</div></li>
 <li><input type="checkbox"><div class="t">Try the AI: open <b>Work</b> → the round chat button at the bottom right → ask <code>What should I do today?</code></div></li>
-<li><input type="checkbox"><div class="t"><b>Only if you installed Ollama on the laptop before:</b> <b>Settings</b> → <b>Apps</b> → <b>Installed apps</b> → <b>Ollama</b> → <b>⋯</b> → <b>Uninstall</b>. Then in File Explorer go to <code>C:\Users\</code><i>your name</i> and delete the <b>.ollama</b> folder (several GB). Click <b>Start</b>, type <code>environment variables</code> → <b>Edit environment variables for your account</b> → select <b>OLLAMA_ORIGINS</b> → <b>Delete</b>, the same for <b>OLLAMA_HOST</b> → <b>OK</b>.</div></li>
+<li><input type="checkbox"><div class="t"><b>Only if you installed Ollama on the laptop before:</b> <b>Settings</b> → <b>Apps</b> → <b>Installed apps</b> (Windows 10: <b>Apps &amp; features</b>) → <b>Ollama</b> → <b>⋯</b> → <b>Uninstall</b>. Then in File Explorer go to <code>C:\Users\</code><i>your name</i> and delete the <b>.ollama</b> folder (several GB). Click <b>Start</b>, type <code>environment variables</code> → <b>Edit environment variables for your account</b> → select <b>OLLAMA_ORIGINS</b> → <b>Delete</b>, the same for <b>OLLAMA_HOST</b> → <b>OK</b>.</div></li>
 </ol>
 </section>
 
@@ -159,7 +174,7 @@ th{font:700 11px var(--head);letter-spacing:.12em;text-transform:uppercase;color
 <p class="why">About 10 minutes.</p>
 <ol class="steps">
 <li><input type="checkbox"><div class="t">Open the <b>Play Store</b>, search <b>Tailscale</b> → <b>Install</b> → <b>Open</b> → <b>Get started</b> / <b>Log in</b> with the <b>same account</b>. When Android asks to set up a VPN connection, tap <b>OK</b>. Make sure the switch says <b>Connected</b>.</div></li>
-<li><input type="checkbox"><div class="t"><b>Install Workbench as an app.</b> In <b>Chrome</b> open <b>tonystarkofficial1111-web.github.io/Workbench</b> → tap <b>⋮</b> (top right) → <b>Add to Home screen</b> → <b>Install</b>. Open it from the new icon on your home screen.</div></li>
+<li><input type="checkbox"><div class="t"><b>Install Workbench as an app.</b> In <b>Chrome</b> open <b>tonystarkofficial1111-web.github.io/Workbench</b>, wait until it's fully open → tap <b>⋮</b> (top right) → <b>Add to Home screen</b> (or <b>Install app</b>) → <b>Install</b>. Open it from the new icon on your home screen.</div></li>
 <li><input type="checkbox"><div class="t">Tap the <b>bell</b> → <b>Connect the Hub</b> → type the <b>Hub address</b>, <b>Your name</b> and <b>PIN</b>, and <code>Phone</code> as <b>This device</b> → <b>Connect</b>. Your Work and saves come over.</div></li>
 <li><input type="checkbox"><div class="t">Under <b>Notifications on this device</b> → <b>Turn on</b> → <b>Allow</b>. Then <b>Send a test</b>; a notification arrives within seconds. If not: Android <b>Settings</b> → <b>Apps</b> → <b>Workbench</b> → <b>Notifications</b> on, and <b>Battery</b> → <b>Unrestricted</b>.</div></li>
 <li><input type="checkbox"><div class="t">Under <b>AI</b> → <b>Use the rig's AI here</b>.</div></li>
@@ -195,6 +210,7 @@ th{font:700 11px var(--head);letter-spacing:.12em;text-transform:uppercase;color
 <h2><span>?</span> If something's wrong</h2>
 <table>
 <tr><th>What you see</th><th>What to do</th></tr>
+<tr><td>No install icon in Chrome</td><td>Make sure the address bar shows the website (it starts with <code>tonystarkofficial1111-web.github.io</code>), not a file (<code>file:///C:/…</code>). Wait for Workbench to finish opening, then use <b>⋮</b> → <b>Cast, save, and share</b> → <b>Install page as app…</b>.</td></tr>
 <tr><td>"Can't reach the Hub"</td><td>Is Tailscale <b>Connected</b> on this device? Is the rig on? On the rig, hover the Hub's icon near the clock: it should say Online. If not, right-click it → <b>Restart the Hub</b>.</td></tr>
 <tr><td>No address at the end of the installer</td><td>Do part B again (steps 2 to 4), then double-click <b>Install Workbench Hub</b> again. Running it again is safe and keeps everything.</td></tr>
 <tr><td>The phone doesn't show up on the rig</td><td>Unlock the phone, pick <b>File transfer</b> in the USB notice, and try another cable.</td></tr>
@@ -210,15 +226,16 @@ th{font:700 11px var(--head);letter-spacing:.12em;text-transform:uppercase;color
 </main>
 <script>
 (function(){
-  var KEY = "wb-rig-guide-2", boxes = Array.prototype.slice.call(document.querySelectorAll("ol.steps input[type=checkbox]")), st = {};
+  var KEY = "wb-rig-guide-3", boxes = Array.prototype.slice.call(document.querySelectorAll("ol.steps input[type=checkbox]")), st = {};
+  var ids = boxes.map(function(b){ var s = b.closest("section"), t = b.closest("li").textContent.replace(/\s+/g, " ").trim().slice(0, 60); return (s ? s.id : "") + ":" + t; });
   try { st = JSON.parse(localStorage.getItem(KEY) || "{}") || {}; } catch (e) {}
   function draw(){
     var n = 0;
-    boxes.forEach(function(b, i){ b.checked = !!st[i]; b.closest("li").classList.toggle("done", b.checked); if (b.checked) n++; });
+    boxes.forEach(function(b, i){ b.checked = !!st[ids[i]]; b.closest("li").classList.toggle("done", b.checked); if (b.checked) n++; });
     document.getElementById("pc").textContent = n + " of " + boxes.length + " done";
     document.getElementById("pb").style.width = (boxes.length ? n / boxes.length * 100 : 0) + "%";
   }
-  boxes.forEach(function(b, i){ b.addEventListener("change", function(){ st[i] = b.checked; try { localStorage.setItem(KEY, JSON.stringify(st)); } catch (e) {} draw(); }); });
+  boxes.forEach(function(b, i){ b.addEventListener("change", function(){ st[ids[i]] = b.checked; try { localStorage.setItem(KEY, JSON.stringify(st)); } catch (e) {} draw(); }); });
   document.getElementById("reset").addEventListener("click", function(){ if (confirm("Untick every step?")) { st = {}; try { localStorage.removeItem(KEY); } catch (e) {} draw(); } });
   draw();
 })();
