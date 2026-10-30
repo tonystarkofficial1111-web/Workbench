@@ -1,6 +1,6 @@
 {
  "version": "1.1.0",
- "app": "6.1.0",
+ "app": "6.2.0",
  "files": {
   "server.js": "ca567321ec62c8479ffdd2639db157e7aa3c916d2b680835ccdb1e25af727811",
   "push.js": "bb578b9dd5f09389a6539ece0aaf2c61e0b89a88d91e5ac440f0021d9aa157e2",
