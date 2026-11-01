@@ -59,12 +59,17 @@ For family members, either:
 ### 5. Phone notifications
 On the phone, in the Workbench app: bell → Hub → **Notifications on this device** → **Turn on** → Allow. Then press **Send a test**.
 
+### The Rig tab
+Workbench has a **Rig** tab on the rail down the left. It shows the rig's health live: how busy the processor and graphics card are, memory, storage left on every drive, the graphics card's temperature and what's using it, the AI and its models, the devices on Tailscale, and how many people use the Hub (online now, today, this week).
+
+Changes to the rig are made from Workbench **on the rig itself**: its folders, its people (add, new PIN, allow Work, remove, sign a device out), adding music and videos, and loading or letting go of the AI's model. On the laptop and the phone the Rig tab is view-only. The Hub knows a request comes from the rig because Tailscale passes along who is asking.
+
 ### 6. Family
-In the Hub window, under **People**, add each person with their own PIN. They sign in on their own device with that name and PIN. Each person sees only their own music, videos and saves. Work stays with you and the people you tick as **Can open Work**, and it still asks for the Work PIN.
+On the rig, in the **Rig** tab under **People**, add each person with their own PIN. They sign in on their own device with that name and PIN. Each person sees only their own music, videos and saves. Work stays with you and the people you tick as **Can open Work**, and it still asks for the Work PIN.
 
 ### 7. Music and videos
 You can add music and videos in two ways:
-- In the Hub window, use **Send music to the rig** or **Send videos**.
+- On the rig, in the **Rig** tab: **Add music** or **Add videos**. From another device: Media → **Rig library** → **Send to the rig**.
 - On the rig, copy files into the Hub folder:
   - `Users\<your name>\Music` and `Users\<your name>\Videos` for your own files
   - `Shared\Music` and `Shared\Videos` for everyone
@@ -74,7 +79,7 @@ To play them:
 - **For DJing:** Work → DJ → Library → **Rig library**. The tracks play on whichever computer is DJing.
 
 ### Your own big folder
-Got one folder with everything in it? Give its path to the installer, or add it later from any device: bell → Hub → **Folders on the rig** → **Add a folder…**, then click through the rig's drives to it.
+Got one folder with everything in it? Give its path to the installer, or add it later on the rig: **Rig** tab → **Folders on the rig** → **Add a folder…**, then click through the rig's drives to it.
 
 - **Nothing is moved or copied:** it's read where it is, and new files show up by themselves.
 - **What it picks out:** music and videos, by their folder names (Music, Songs, DJ, Videos, Movies…) and file types.
@@ -100,7 +105,7 @@ The rig downloads it into your Music or Videos, even while your devices are off.
   - **Work data:** a copy of work.json is saved every day in the Hub folder (`.hub\backups`, the last 90 days).
   - **When the second drive arrives:** set `"backupDir": "E:\\Backups"` in `%LOCALAPPDATA%\WorkbenchHub\hub.json` to keep a copy there too.
   - **More music folders on that drive:** add them under `"libraries"` in the same file, for example `[{ "path": "E:\\Music", "kind": "music" }]`.
-- **Forgot a PIN?** On the rig, run `reset-pin.bat` from the installer folder.
+- **Forgot a PIN?** For family: on the rig, **Rig** tab → **People** → **New PIN**. For the owner: on the rig, run `reset-pin.bat` from the installer folder.
 - **"Can't reach the Hub":** check that the rig is on and that Tailscale is on on the device. On the rig, the tray icon should say Online.
 - **Removing it:** run `uninstall.ps1` from `%LOCALAPPDATA%\WorkbenchHub\app`. Your Hub folder and files stay.
 

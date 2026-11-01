@@ -56,7 +56,7 @@ th{font:700 11px var(--head);letter-spacing:.12em;text-transform:uppercase;color
 <div class="k">Workbench · the rig</div>
 <h1>Set up the rig</h1>
 <p class="lead">From nothing to everything: the rig at home runs the AI, the Workbench Hub and holds all your music and videos. Your laptop and phone reach it through Tailscale, at home or away, and can keep songs for offline.</p>
-<nav class="toc"><a href="#start">Start here</a><a href="#w">W · The app</a><a href="#a">A · Prepare</a><a href="#b">B · Tailscale</a><a href="#c">C · Big folder</a><a href="#d">D · Hub + AI</a><a href="#e">E · Check AI</a><a href="#f">F · Laptop</a><a href="#g">G · Phone</a><a href="#h">H · Music</a><a href="#i">I · Leave it on</a><a href="#fix">Fixes</a></nav>
+<nav class="toc"><a href="#start">Start here</a><a href="#w">W · The app</a><a href="#a">A · Prepare</a><a href="#b">B · Tailscale</a><a href="#c">C · Big folder</a><a href="#d">D · Hub + AI</a><a href="#e">E · Check AI</a><a href="#r">R · Rig tab</a><a href="#f">F · Laptop</a><a href="#g">G · Phone</a><a href="#h">H · Music</a><a href="#i">I · Leave it on</a><a href="#fix">Fixes</a></nav>
 <section id="start">
 <h2><span>0</span> Start here</h2>
 <p class="why">You need about two hours in total, most of it waiting for downloads and copying. Do the parts in order: each one needs the one before.</p>
@@ -74,7 +74,7 @@ th{font:700 11px var(--head);letter-spacing:.12em;text-transform:uppercase;color
 
 <section id="w">
 <h2><span>W</span> Workbench as an app</h2>
-<p class="why">About 3 minutes. Do this on the rig now, and later on the laptop (part F) and the phone (part G). A downloaded Workbench file (like <b>Workbench_6_3_0.html</b>) opened in Chrome <b>can't</b> be installed as an app: Chrome only installs apps from a website. The app comes from the Workbench website instead. It's the same Workbench, always the newest version, it opens without internet once installed, and it gets its own window and icon.</p>
+<p class="why">About 3 minutes. Do this on the rig now, and later on the laptop (part F) and the phone (part G). A downloaded Workbench file (like <b>Workbench_6_4_0.html</b>) opened in Chrome <b>can't</b> be installed as an app: Chrome only installs apps from a website. The app comes from the Workbench website instead. It's the same Workbench, always the newest version, it opens without internet once installed, and it gets its own window and icon.</p>
 <ol class="steps">
 <li><input type="checkbox"><div class="t">Open <b>Chrome</b>. Click the address bar at the top, type <code>tonystarkofficial1111-web.github.io/Workbench</code> and press <kbd>Enter</kbd>. <span class="step-sub">If it says 404, try it with a small w: <code>tonystarkofficial1111-web.github.io/workbench</code>.</span></div></li>
 <li><input type="checkbox"><div class="t">Wait until Workbench has fully opened. The first time it can take up to a minute: it's a big app. Click <b>I understand</b> if the notice shows.</div></li>
@@ -154,6 +154,19 @@ th{font:700 11px var(--head);letter-spacing:.12em;text-transform:uppercase;color
 </ol>
 </section>
 
+<section id="r">
+<h2><span>R</span> The Rig tab, on the rig</h2>
+<p class="why">About 5 minutes. The <b>Rig</b> tab is where you look after the rig: how much storage is left, memory, the graphics card, the AI, who is connected, and the rig's folders, people and files. It shows the numbers on every device, but changes are made only from Workbench <b>on the rig itself</b>.</p>
+<ol class="steps">
+<li><input type="checkbox"><div class="t">On the rig, open the <b>Workbench</b> app (part W). Click the <b>bell</b> at the top right → <b>Connect the Hub</b>. Type the <b>Hub address</b> (part D), your <b>name</b> and <b>PIN</b>, and for <b>This device</b> type <code>Rig</code> → <b>Connect</b>.</div></li>
+<li><input type="checkbox"><div class="t">On the rail down the left, click <b>Rig</b>. Near the top it says <b>On the rig · full controls</b>, and tiles show the processor, memory, storage, the graphics card, the AI and the people using the Hub. They refresh every few seconds. <span class="step-sub">If it says <b>The Hub needs its update</b>: right-click the Hub icon by the clock → <b>Restart the Hub</b>, wait 5 minutes, and open the Rig tab again.</span></div></li>
+<li><input type="checkbox"><div class="t">Scroll down to <b>Manage the rig</b> → <b>Folders on the rig</b>. Your <b>Everything</b> folder is there with how many songs and videos it found (give it a minute). If it isn't, click <b>Add a folder…</b>, click through the drives to <b>Everything</b> → <b>Use this folder</b>.</div></li>
+<li><input type="checkbox"><div class="t">Songs or videos somewhere else on the rig (a USB stick, Downloads)? <b>Put files on the rig</b> → <b>Add music</b> or <b>Add videos</b> → pick them → <b>Open</b>. Tick <b>Put them in Shared</b> first if they're for the whole family.</div></li>
+<li><input type="checkbox"><div class="t">The <b>AI</b> panel shows the model. <b>Load</b> gets it ready on the graphics card so the first answer is quick; <b>Let go</b> frees the card for a game.</div></li>
+<li><input type="checkbox"><div class="t">On the laptop or the phone the Rig tab shows the same numbers with a lock: <b>View only on this device</b>. That's on purpose. <span class="step-sub">If it shows the lock on the rig itself, click <b>This device is the rig</b>.</span></div></li>
+</ol>
+</section>
+
 <section id="f">
 <h2><span>F</span> The laptop</h2>
 <p class="why">About 15 minutes.</p>
@@ -162,8 +175,8 @@ th{font:700 11px var(--head);letter-spacing:.12em;text-transform:uppercase;color
 <li><input type="checkbox"><div class="t"><b>Open Workbench.</b> If you already have Work in the copy you've been using on the laptop (a downloaded file), open that one for this first connection so your Work goes up to the rig. Then install the app as in <b>part W</b> and connect it too (step 3 again); from then on just use the app.</div></li>
 <li><input type="checkbox"><div class="t">Click the <b>bell</b> at the top right → <b>Connect the Hub</b>. Fill in <b>Hub address</b> (from part D, like <code>https://rig.tail1234.ts.net</code>), <b>Your name</b> and <b>PIN</b>, and leave <b>This device</b> as it is (or type <code>Laptop</code>). Click <b>Connect</b>. If the browser asks to let the site reach devices on your network, click <b>Allow</b>. It says <b>Connected</b>, and your Work, design files and saves go up to the rig.</div></li>
 <li><input type="checkbox"><div class="t">In the same window, under <b>AI</b>, click <b>Use the rig's AI here</b>.</div></li>
-<li><input type="checkbox"><div class="t"><b>Check your big folder.</b> Scroll down to <b>Folders on the rig</b>. Your <b>Everything</b> folder is there with how many songs and videos it found (give it a minute). If it's not there, click <b>Add a folder…</b>, click through the rig's drives to <b>Everything</b> → <b>Use this folder</b>. Leave <b>Family can see it</b> off unless it's for everyone.</div></li>
-<li><input type="checkbox"><div class="t"><b>Send the laptop's own songs to the rig.</b> Click <b>Send music to the rig</b> (in the Hub window under <b>Music and videos</b>), or go to <b>Media</b> → <b>Rig library</b> → <b>Send to the rig</b>. Pick the songs: click the first, hold <kbd>Shift</kbd> and click the last to pick many, or press <kbd>Ctrl</kbd> + <kbd>A</kbd> for the whole folder → <b>Open</b>. A bar shows each song going up. They land in your Music on the rig.</div></li>
+<li><input type="checkbox"><div class="t"><b>Look at the rig from here.</b> Click <b>Rig</b> on the rail down the left: the rig's storage, memory, graphics card and AI show here too, view-only. Folders and people are changed on the rig (part R).</div></li>
+<li><input type="checkbox"><div class="t"><b>Send the laptop's own songs to the rig.</b> Go to <b>Media</b> → <b>Rig library</b> → <b>Send to the rig</b>. Pick the songs: click the first, hold <kbd>Shift</kbd> and click the last to pick many, or press <kbd>Ctrl</kbd> + <kbd>A</kbd> for the whole folder → <b>Open</b>. A bar shows each song going up. They land in your Music on the rig.</div></li>
 <li><input type="checkbox"><div class="t">Try the AI: open <b>Work</b> → the round chat button at the bottom right → ask <code>What should I do today?</code></div></li>
 <li><input type="checkbox"><div class="t"><b>Only if you installed Ollama on the laptop before:</b> <b>Settings</b> → <b>Apps</b> → <b>Installed apps</b> (Windows 10: <b>Apps &amp; features</b>) → <b>Ollama</b> → <b>⋯</b> → <b>Uninstall</b>. Then in File Explorer go to <code>C:\Users\</code><i>your name</i> and delete the <b>.ollama</b> folder (several GB). Click <b>Start</b>, type <code>environment variables</code> → <b>Edit environment variables for your account</b> → select <b>OLLAMA_ORIGINS</b> → <b>Delete</b>, the same for <b>OLLAMA_HOST</b> → <b>OK</b>.</div></li>
 </ol>
@@ -202,7 +215,7 @@ th{font:700 11px var(--head);letter-spacing:.12em;text-transform:uppercase;color
 <ol class="steps">
 <li><input type="checkbox"><div class="t">Leave the rig on and unplug the monitor if you like. Everything keeps running.</div></li>
 <li><input type="checkbox"><div class="t">On your phone, the small dot on the bell is the rig: <b>green = online</b>. In the bell → <b>Hub</b> it says <b>Online · rig</b>.</div></li>
-<li><input type="checkbox"><div class="t"><b>Family:</b> on the laptop, bell → <b>Hub</b> → <b>People</b> → type their name and a PIN → <b>Add person</b>. On their device they install Tailscale and sign in with your account (or, in Tailscale's admin page → <b>Machines</b> → rig → <b>⋯</b> → <b>Share…</b>, share the rig with their own account), then connect the Hub with their name and PIN. They see only their own music unless you tick <b>Family can see it</b> on a folder.</div></li>
+<li><input type="checkbox"><div class="t"><b>Family:</b> on the rig, <b>Rig</b> tab → <b>People</b> → type their name and a PIN → <b>Add person</b>. On their device they install Tailscale and sign in with your account (or, in Tailscale's admin page → <b>Machines</b> → rig → <b>⋯</b> → <b>Share…</b>, share the rig with their own account), then connect the Hub with their name and PIN. They see only their own music unless you tick <b>Family can see it</b> on a folder.</div></li>
 </ol>
 </section>
 
@@ -212,10 +225,12 @@ th{font:700 11px var(--head);letter-spacing:.12em;text-transform:uppercase;color
 <tr><th>What you see</th><th>What to do</th></tr>
 <tr><td>No install icon in Chrome</td><td>Make sure the address bar shows the website (it starts with <code>tonystarkofficial1111-web.github.io</code>), not a file (<code>file:///C:/…</code>). Wait for Workbench to finish opening, then use <b>⋮</b> → <b>Cast, save, and share</b> → <b>Install page as app…</b>.</td></tr>
 <tr><td>Lost the <b>Hub address</b></td><td>On the rig, open PowerShell and run <code>tailscale serve status</code>. The line starting with <code>https://</code> (like <code>https://rig.tail1234.ts.net</code>) is the address; leave out "(tailnet only)". If it says <b>No serve config</b>, run <code>tailscale serve --bg 8770</code> (open any link it shows and click <b>Enable</b>), then <code>tailscale serve status</code> again. Or in Tailscale's admin page → <b>DNS</b>, the <b>Tailnet name</b> at the top (like <code>tail1234.ts.net</code>) gives <code>https://rig.</code> + that name. To test it, open the address followed by <code>/api/ping</code> in Chrome on a device with Tailscale on: it should show <code>"hub":"Workbench Hub"</code>.</td></tr>
+<tr><td>The Rig tab says "View only" on the rig</td><td>Click <b>This device is the rig</b> in the lock box. It only unlocks this device.</td></tr>
+<tr><td>A family member forgot their PIN</td><td>On the rig, <b>Rig</b> tab → <b>People</b> → <b>New PIN</b> next to their name.</td></tr>
 <tr><td>"Can't reach the Hub"</td><td>Is Tailscale <b>Connected</b> on this device? Is the rig on? On the rig, hover the Hub's icon near the clock: it should say Online. If not, right-click it → <b>Restart the Hub</b>.</td></tr>
 <tr><td>No address at the end of the installer</td><td>Do part B again (steps 2 to 4), then double-click <b>Install Workbench Hub</b> again. Running it again is safe and keeps everything.</td></tr>
 <tr><td>The phone doesn't show up on the rig</td><td>Unlock the phone, pick <b>File transfer</b> in the USB notice, and try another cable.</td></tr>
-<tr><td>Songs don't show in Rig library</td><td>Wait a minute and reopen it. Check the bell → Hub → <b>Folders on the rig</b> shows a song count. Make sure the songs are inside a folder named Music (or Songs, Audio…) and are MP3, M4A, FLAC, WAV, OGG or Opus.</td></tr>
+<tr><td>Songs don't show in Rig library</td><td>Wait a minute and reopen it. Check the <b>Rig</b> tab → <b>Folders on the rig</b> shows a song count. Make sure the songs are inside a folder named Music (or Songs, Audio…) and are MP3, M4A, FLAC, WAV, OGG or Opus.</td></tr>
 <tr><td>A song won't play</td><td>It's probably WMA or a protected file; convert it as in part C, step 6.</td></tr>
 <tr><td><b>Keep</b> fails on the phone</td><td>The phone is out of room. Free some space, or keep fewer songs.</td></tr>
 <tr><td><code>ollama run</code> says <b>exit status 0xc0000409</b> and <b>the provided PTX was compiled with an unsupported toolchain</b></td><td>The graphics driver is older than the AI needs. 1) Go to <b>nvidia.com/drivers</b> → Product Category <b>GeForce</b> → Product Series (your card's, e.g. <b>GeForce 10 Series</b>) → Product (your card) → your Windows → <b>Game Ready Driver</b> → <b>Find</b> → <b>Download</b>. 2) Run it → <b>NVIDIA Graphics Driver</b> → <b>Agree and Continue</b> → <b>Custom (Advanced)</b> → tick <b>Perform a clean installation</b> → <b>Next</b>. 3) Restart the rig. 4) In PowerShell, <code>nvidia-smi</code> should show the new Driver Version. 5) Run <code>ollama run llama3.1:8b</code> again.</td></tr>

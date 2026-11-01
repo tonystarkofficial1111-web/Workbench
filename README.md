@@ -3,6 +3,8 @@ The all in one server
 
 Stark Enterprises Workbench: Work, Educational, Media, Arcade, the Assistant and more, in one app.
 
+New to it? Open the **Table** tab (on the rail down the left): it explains every name the app uses, what each tab does, and how to connect a device.
+
 **Open it:** https://tonystarkofficial1111-web.github.io/Workbench/
 
 ## Install it as an app
@@ -31,3 +33,5 @@ The Hub runs on the computer that stays on at home. One folder there holds every
 ## Your data stays on your devices
 
 This repository holds only the app and the Hub program. Work files and invoices live in the folder you choose on your computer (and on your own Hub, if you set one up), and music, videos, notes and saves stay in the app on each device and on your Hub. None of it is uploaded here.
+
+**Counting visitors:** the website can count how many devices open it each day, anonymously, through GoatCounter: no names, nothing you type, no cookies. Devices that ask websites not to track them are never counted, and anyone can switch it off in the Table tab. It is off until the owner sets it up.

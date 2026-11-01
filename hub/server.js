@@ -17,7 +17,7 @@ const http = require("http"),
   { readTags } = require("./tags.js"),
   { __wbReminders } = require("./reminders.js");
 
-const VERSION = "1.1.0";
+const VERSION = "1.2.0";
 const HOME = process.env.WB_HUB_HOME || path.join(__dirname, "..");
 const CONF = process.env.WB_HUB_CONFIG || path.join(HOME, "hub.json");
 const APP = "https://tonystarkofficial1111-web.github.io";
@@ -712,6 +712,7 @@ async function checkUpdate() {
     const r = await fetch(C.update + "version.json", { cache: "no-store", signal: AbortSignal.timeout(20000) });
     if (!r.ok) return;
     const v = await r.json();
+    Object.assign(UPD, { checked: Date.now(), latest: String(v.version || ""), err: "" });
     if (!newer(v.version, VERSION)) return;
     const tmp = path.join(__dirname, ".update");
     fs.rmSync(tmp, { recursive: !0, force: !0 });
@@ -727,6 +728,7 @@ async function checkUpdate() {
     log("Updated to", v.version, "- restarting");
     setTimeout(() => process.exit(3), 300);
   } catch (e) {
+    Object.assign(UPD, { checked: Date.now(), err: e.message });
     log("Update check:", e.message);
   }
 }
@@ -755,6 +757,205 @@ function statusPage(req, res) {
   res.end(html);
 }
 
+// ---- the rig's health (the Rig tab in Workbench) -------------------------------------------------
+const { execFile } = require("child_process");
+const STARTED = Date.now();
+const UPD = { checked: 0, latest: "", err: "" };
+// run a program on the rig and give back what it printed, or "" if it isn't there
+function runOut(cmds, args, ms) {
+  return new Promise((done) => {
+    const list = [].concat(cmds),
+      next = (i) => {
+        if (i >= list.length) return done("");
+        execFile(list[i], args, { timeout: ms || 4000, windowsHide: !0, maxBuffer: 4e6 }, (e, out) => (e && !out ? next(i + 1) : done(String(out || ""))));
+      };
+    next(0);
+  });
+}
+const WIN = process.platform === "win32";
+const NVSMI = WIN ? ["nvidia-smi", "C:\\Windows\\System32\\nvidia-smi.exe", "C:\\Program Files\\NVIDIA Corporation\\NVSMI\\nvidia-smi.exe"] : ["nvidia-smi"];
+const TSCLI = WIN ? ["tailscale", "C:\\Program Files\\Tailscale\\tailscale.exe"] : ["tailscale"];
+const num = (s) => {
+  const n = parseFloat(String(s).trim());
+  return isFinite(n) ? n : null;
+};
+// how busy the processor is: the share of time not idle since the last look
+let cpuPrev = null;
+function cpuNow() {
+  const t = os.cpus().map((c) => c.times),
+    sum = t.reduce((a, x) => ((a.idle += x.idle), (a.all += x.user + x.nice + x.sys + x.idle + x.irq), a), { idle: 0, all: 0 });
+  return sum;
+}
+async function cpuBusy() {
+  let a = cpuPrev;
+  if (!a || Date.now() - a.at > 30000) ((a = Object.assign(cpuNow(), { at: Date.now() })), await new Promise((z) => setTimeout(z, 400)));
+  const b = Object.assign(cpuNow(), { at: Date.now() });
+  if (b.at - a.at < 400) return cpuPrev.pct;
+  const pct = b.all > a.all ? Math.max(0, Math.min(100, Math.round((100 * (1 - (b.idle - a.idle) / (b.all - a.all))) * 10) / 10)) : 0;
+  cpuPrev = Object.assign(b, { pct });
+  return pct;
+}
+// the graphics card, from NVIDIA's own tool (cached a couple of seconds)
+const gpuC = { t: 0, v: null, p: null };
+async function gpuInfo() {
+  if (Date.now() - gpuC.t < 2500) return gpuC.v;
+  if (gpuC.p) return gpuC.p;
+  return (gpuC.p = (async () => {
+    const out = await runOut(NVSMI, ["--query-gpu=name,driver_version,temperature.gpu,utilization.gpu,memory.used,memory.total,power.draw,power.limit,fan.speed", "--format=csv,noheader,nounits"], 5000);
+    let cards = out
+      .split(/\r?\n/)
+      .filter((l) => l.trim())
+      .map((l) => {
+        const f = l.split(",").map((x) => x.trim());
+        return { name: f[0], driver: f[1], temp: num(f[2]), busy: num(f[3]), memUsed: num(f[4]), memTotal: num(f[5]), power: num(f[6]), powerMax: num(f[7]), fan: num(f[8]) };
+      });
+    if (cards.length) {
+      const ap = await runOut(NVSMI, ["--query-compute-apps=pid,process_name,used_memory", "--format=csv,noheader,nounits"], 5000);
+      cards[0].apps = ap
+        .split(/\r?\n/)
+        .filter((l) => l.trim())
+        .map((l) => {
+          const f = l.split(",").map((x) => x.trim());
+          return { pid: num(f[0]), name: path.basename(String(f[1] || "").replace(/\\/g, "/")), mem: num(f[2]) };
+        })
+        .slice(0, 12);
+    }
+    gpuC.v = cards.length ? cards : null;
+    gpuC.t = Date.now();
+    gpuC.p = null;
+    return gpuC.v;
+  })());
+}
+// the AI (Ollama): is it up, which models it has, which one sits in memory now
+async function aiGet(p, ms) {
+  try {
+    const r = await fetch(C.ollama.replace(/\/+$/, "") + p, { signal: AbortSignal.timeout(ms || 1500) });
+    return r.ok ? await r.json() : null;
+  } catch {
+    return null;
+  }
+}
+async function aiInfo() {
+  const [v, tags, ps] = await Promise.all([aiGet("/api/version"), aiGet("/api/tags"), aiGet("/api/ps")]);
+  if (!v && !tags) return { up: !1, url: C.ollama };
+  return {
+    up: !0,
+    url: C.ollama,
+    version: (v && v.version) || "",
+    models: ((tags && tags.models) || []).map((m) => ({ name: m.name, size: m.size, at: Date.parse(m.modified_at) || 0, params: (m.details && m.details.parameter_size) || "", quant: (m.details && m.details.quantization_level) || "" })),
+    loaded: ((ps && ps.models) || []).map((m) => ({ name: m.name, size: m.size, vram: m.size_vram, until: Date.parse(m.expires_at) || 0 })),
+    model: C.aiModel || "",
+  };
+}
+async function aiKeep(model, load) {
+  const r = await fetch(C.ollama.replace(/\/+$/, "") + "/api/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model, keep_alive: load ? "30m" : 0 }), signal: AbortSignal.timeout(load ? 120000 : 15000) }).catch(() => null);
+  if (!r) throw Object.assign(new Error("The AI isn't running on the rig."), { code: 502 });
+  if (!r.ok) throw Object.assign(new Error("The AI said no: " + ((await r.text().catch(() => "")) || r.status).slice(0, 200)), { code: 502 });
+  await r.text().catch(() => "");
+}
+// the devices on the private network (Tailscale), cached a little
+const tsC = { t: 0, v: null };
+async function tailnet() {
+  if (Date.now() - tsC.t < 15000) return tsC.v;
+  let j = null;
+  try {
+    j = JSON.parse(await runOut(TSCLI, ["status", "--json"], 5000));
+  } catch {}
+  const dev = (p, self) => ({ name: p.HostName || String(p.DNSName || "").split(".")[0], os: p.OS || "", online: self || !!p.Online, ip: (p.TailscaleIPs || [])[0] || "", seen: self ? Date.now() : Date.parse(p.LastSeen) > 0 ? Date.parse(p.LastSeen) : 0, self: !!self });
+  tsC.v = j && j.Self ? { state: j.BackendState || "", name: j.MagicDNSSuffix || "", self: dev(j.Self, !0), peers: Object.values(j.Peer || {}).map((p) => dev(p)).sort((a, b) => b.online - a.online || b.seen - a.seen) } : null;
+  tsC.t = Date.now();
+  return tsC.v;
+}
+// is this request coming from the rig itself? (the Hub only listens on the rig; Tailscale says who
+// is on the other end in X-Forwarded-For, and the rig's own addresses mean it's the rig)
+function localAddrs() {
+  const s = new Set(["127.0.0.1", "::1"]);
+  for (const l of Object.values(os.networkInterfaces())) for (const a of l || []) s.add(String(a.address).replace(/^::ffff:/, "").replace(/%.*$/, ""));
+  return s;
+}
+function fromRig(req) {
+  const L = localAddrs(),
+    ra = String(req.socket.remoteAddress || "").replace(/^::ffff:/, "");
+  if (!L.has(ra)) return !1;
+  const xf = String(req.headers["x-forwarded-for"] || "")
+    .split(",")
+    .map((s) => s.trim().replace(/^::ffff:/, "").replace(/^\[|\]$/g, ""))
+    .filter(Boolean);
+  if (!xf.length) return !(req.headers["x-forwarded-host"] || req.headers["tailscale-user-login"]);
+  return xf.every((ip) => L.has(ip));
+}
+function diskList() {
+  const root = path.resolve(C.root).toLowerCase(),
+    out = [];
+  for (const d of drives())
+    try {
+      const s = fs.statfsSync(d);
+      out.push({ path: d, free: s.bavail * s.bsize, size: s.blocks * s.bsize, hub: root.startsWith(d.toLowerCase()) && (d !== "/" || out.length === 0) });
+    } catch {}
+  return out;
+}
+function lastBackup() {
+  let best = null;
+  for (const dir of [hubf("backups"), C.backupDir ? path.join(C.backupDir, "Workbench Hub backups") : ""].filter(Boolean))
+    try {
+      for (const f of fs.readdirSync(dir))
+        if (/^work-.*\.json$/.test(f)) {
+          const st = fs.statSync(path.join(dir, f));
+          if (!best || st.mtimeMs > best.at) best = { at: st.mtimeMs, name: f, size: st.size, second: dir !== hubf("backups") };
+        }
+    } catch {}
+  return best;
+}
+// who uses the Hub: people, their devices, and who is here right now
+function usage() {
+  const now = Date.now(),
+    on = new Set([...live].map((c) => c.device.id)),
+    devs = DV.devices.map((d) => {
+      const x = U.users.find((y) => y.id === d.user);
+      return { id: d.id, name: d.name, user: x ? x.name : "?", seen: d.seen || 0, online: on.has(d.id), push: !!d.push, created: d.created || 0 };
+    }),
+    act = (ms) => new Set(devs.filter((d) => d.online || now - d.seen < ms).map((d) => d.user)).size;
+  return {
+    people: U.users.length,
+    devices: devs.length,
+    online: devs.filter((d) => d.online).length,
+    peopleOnline: act(0),
+    today: act(864e5),
+    week: act(7 * 864e5),
+    month: act(30 * 864e5),
+    list: devs.sort((a, b) => b.online - a.online || b.seen - a.seen),
+  };
+}
+async function systemInfo(req) {
+  const [cpu, gpu, ai, net] = await Promise.all([cpuBusy(), gpuInfo(), aiInfo(), tailnet()]),
+    c0 = os.cpus()[0] || {},
+    mem = process.memoryUsage();
+  const libs = libraries().map((l) => {
+    const c = libCache.get("l:" + l.id);
+    let exists = !1;
+    try {
+      exists = fs.statSync(l.path).isDirectory();
+    } catch {}
+    return { label: l.label || path.basename(l.path), path: l.path, everyone: !!l.everyone, exists, music: c ? c.items.music.length : null, video: c ? c.items.video.length : null };
+  });
+  return {
+    at: Date.now(),
+    rig: fromRig(req),
+    machine: { name: os.hostname(), os: WIN ? "Windows " + os.release() : os.type() + " " + os.release(), arch: os.arch(), up: Math.round(os.uptime()) },
+    cpu: { model: String(c0.model || "").replace(/\s+/g, " ").trim(), cores: os.cpus().length, busy: cpu, speed: c0.speed || 0 },
+    ram: { total: os.totalmem(), free: os.freemem() },
+    disks: diskList(),
+    gpu,
+    ai,
+    net,
+    usage: usage(),
+    libraries: libs,
+    backup: lastBackup(),
+    jobs: [...jobs.values()].filter((j) => j.state === "downloading" || j.state === "queued").length,
+    hub: { version: VERSION, up: Math.round((Date.now() - STARTED) / 1000), node: process.version, mem: mem.rss, root: C.root, port: C.port, autoUpdate: !!C.autoUpdate, update: UPD, name: C.name },
+  };
+}
+
 // ---- the routes ---------------------------------------------------------------------------------
 async function route(req, res) {
   const url = new URL(req.url, "http://hub"),
@@ -781,7 +982,22 @@ async function route(req, res) {
         const s = fs.statfsSync(C.root);
         disk = { free: s.bavail * s.bsize, size: s.blocks * s.bsize };
       } catch {}
-      return json(res, 200, { user: pub(u), device: { id: a.device.id, name: a.device.name, push: !!a.device.push }, hub: { name: C.name, version: VERSION, disk: owner ? disk : null, root: owner ? C.root : "" } });
+      return json(res, 200, { user: pub(u), device: { id: a.device.id, name: a.device.name, push: !!a.device.push }, hub: { name: C.name, version: VERSION, disk: owner ? disk : null, root: owner ? C.root : "", rig: fromRig(req) } });
+    }
+    case "/api/system": {
+      if (!owner) return fail(res, 403, "Only the owner can see the rig's health.");
+      return json(res, 200, await systemInfo(req));
+    }
+    case "/api/system/ai": {
+      if (!owner) return fail(res, 403, "Only the owner can do that.");
+      if (M !== "POST") break;
+      const b = await jsonBody(req, 1e4),
+        m = String(b.model || "").slice(0, 200);
+      if (!m) return fail(res, 400, "Which model?");
+      if (b.do === "default") ((C.aiModel = m), writeJson(CONF, C));
+      else await aiKeep(m, b.do === "load");
+      log("AI", b.do || "unload", m);
+      return json(res, 200, { ok: !0, ai: await aiInfo() });
     }
     case "/api/me/pin": {
       const b = await jsonBody(req, 1e4);
@@ -805,6 +1021,26 @@ async function route(req, res) {
         const nu = addUser(b.name, b.pin, "member", !!b.work);
         log("Added", nu.name);
         return json(res, 200, { user: pub(nu) });
+      }
+      if (M === "PATCH" || M === "DELETE") {
+        const b = M === "PATCH" ? await jsonBody(req, 1e4) : {},
+          x = U.users.find((y) => y.id === (b.id || url.searchParams.get("id")));
+        if (!x) return fail(res, 404, "Nobody like that on the Hub.");
+        if (x.role === "owner") return fail(res, 400, "The owner can't be changed or removed here.");
+        if (M === "PATCH") {
+          "work" in b && (x.work = !!b.work);
+          b.pin && setPin(x, b.pin);
+          saveUsers();
+          return json(res, 200, { user: pub(x) });
+        }
+        // their devices are signed out; their music, videos and saves stay in Users\<name> on the rig
+        U.users = U.users.filter((y) => y !== x);
+        DV.devices = DV.devices.filter((d) => d.user !== x.id);
+        for (const c of live) c.user === x && (c.res.end(), live.delete(c));
+        saveUsers();
+        saveDevices();
+        log("Removed", x.name);
+        return json(res, 200, { ok: !0 });
       }
       break;
     case "/api/devices":
