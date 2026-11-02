@@ -34,4 +34,4 @@ The Hub runs on the computer that stays on at home. One folder there holds every
 
 This repository holds only the app and the Hub program. Work files and invoices live in the folder you choose on your computer (and on your own Hub, if you set one up), and music, videos, notes and saves stay in the app on each device and on your Hub. None of it is uploaded here.
 
-**Counting visitors:** the website can count how many devices open it each day, anonymously, through GoatCounter: no names, nothing you type, no cookies. Devices that ask websites not to track them are never counted, and anyone can switch it off in the Table tab. It is off until the owner sets it up.
+**Counting visitors:** the website counts how many devices open it each day, anonymously, through GoatCounter: no names, nothing you type, no cookies. Devices that ask websites not to track them are never counted, a copy opened from a file never is, and anyone can switch it off in the Table tab (Counting).
