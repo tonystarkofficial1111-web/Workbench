@@ -3,6 +3,8 @@ The all in one server
 
 Stark Enterprises Workbench: Work, Educational, Media, Arcade, the Assistant and more, in one app.
 
+**Discover** lists companies worth knowing (each with its own link, `…/Workbench/?from=its-name`), and **Spotlight** plays music from a featured artist. Both are managed on the owner's rig and published here.
+
 New to it? Open the **Table** tab (on the rail down the left): it explains every name the app uses, what each tab does, and how to connect a device.
 
 **Open it:** https://tonystarkofficial1111-web.github.io/Workbench/

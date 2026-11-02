@@ -64,6 +64,14 @@ Workbench has a **Rig** tab on the rail down the left. It shows the rig's health
 
 Changes to the rig are made from Workbench **on the rig itself**, after typing the Assistant's access code: its folders, its people (add, new PIN, allow Work, remove, sign a device out), adding music and videos, and loading or letting go of the AI's model. On the laptop and the phone the Rig tab is view-only. The Hub knows a request comes from the rig because Tailscale passes along who is asking.
 
+### Discover and Spotlight
+**Discover** lists companies for everyone who opens Workbench, and **Spotlight** plays an artist's songs. Both are managed on the rig and then published to the Workbench website, so they're there even while the rig is off:
+
+- **Publishing:** Rig tab → Manage the rig → **Website**: paste a GitHub fine-grained key that can only write to the Workbench repository (Contents: Read and write). **Publish now** sends the companies and approved songs to the site's `public/` folder.
+- **The inbox:** company applications and messages to companies arrive through a small public door on the rig (its own port, `8771`, shared with Tailscale Funnel on `:8443`). It only accepts those two things, limits how often, and your home address stays hidden behind Tailscale.
+- **Companies:** add, edit, feature (shows a Featured tag), hide, give a logo, and copy each company's own link (`…/Workbench/?from=its-name`); visitors who arrive through it are counted anonymously for that company.
+- **The artist:** add a person with **Spotlight artist** ticked. They add songs and their profile from the Spotlight tab; songs wait for the owner's approval.
+
 ### 6. Family
 On the rig, in the **Rig** tab under **People**, add each person with their own PIN. They sign in on their own device with that name and PIN. Each person sees only their own music, videos and saves. Work stays with you and the people you tick as **Can open Work**, and it still asks for the Work PIN.
 

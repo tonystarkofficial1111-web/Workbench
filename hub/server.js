@@ -17,7 +17,7 @@ const http = require("http"),
   { readTags } = require("./tags.js"),
   { __wbReminders } = require("./reminders.js");
 
-const VERSION = "1.2.1";
+const VERSION = "1.3.0";
 const HOME = process.env.WB_HUB_HOME || path.join(__dirname, "..");
 const CONF = process.env.WB_HUB_CONFIG || path.join(HOME, "hub.json");
 const APP = "https://tonystarkofficial1111-web.github.io";
@@ -87,7 +87,7 @@ const safeName = (s) =>
     .slice(0, 60);
 const userDir = (u, kind) => path.join(C.root, "Users", u.dir, kind || "");
 const canWork = (u) => !!u && (u.role === "owner" || !!u.work);
-const pub = (u) => ({ id: u.id, name: u.name, role: u.role, work: canWork(u) });
+const pub = (u) => ({ id: u.id, name: u.name, role: u.role, work: canWork(u), artist: !!u.artist });
 function addUser(name, pin, role, work) {
   name = String(name || "").trim();
   if (!name || !/^\d{4,12}$/.test(String(pin))) throw new Error("A name and a PIN of 4 to 12 digits are needed.");
@@ -927,6 +927,256 @@ async function systemInfo(req) {
   };
 }
 
+// ---- Discover and Spotlight: what the website shows everyone (1.3.0) ------------------------------
+// Companies, their applications and messages, and the Spotlight artist and tracks live on the rig
+// (.hub/public.json and the Public folder). "Publish" puts what's live and approved on the
+// Workbench website through GitHub, so visitors see it even while the rig is off. A small public
+// door, the inbox (its own port, shared to the internet with Tailscale Funnel), only takes company
+// applications and messages to companies; nothing else on the rig is reachable through it.
+const PUBDIR = () => path.join(C.root, "Public");
+let P = null;
+function pubLoad() {
+  if (!P) P = Object.assign({ companies: [], apps: [], msgs: [], artist: { name: "", bio: "", photo: "", socials: {} }, tracks: [], published: { at: 0, commit: "", files: {} }, radioEpoch: 0 }, readJson(hubf("public.json"), {}));
+  return P;
+}
+const pubSave = () => writeJson(hubf("public.json"), P);
+const clip = (v, n) => String(v ?? "").replace(/[\u0000-\u001f]/g, " ").trim().slice(0, n);
+const webUrl = (u) => (/^https?:\/\/[^\s<>"']+$/i.test(String(u || "").trim()) ? String(u).trim().slice(0, 300) : "");
+const SOCIALS = ["instagram", "tiktok", "facebook", "youtube", "x", "whatsapp", "soundcloud", "spotify"];
+function slugOf(s) {
+  return (
+    String(s || "")
+      .toLowerCase()
+      .normalize("NFKD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 40) || "company"
+  );
+}
+function uniqueSlug(name, id) {
+  let s = slugOf(name),
+    n = 2,
+    t = s;
+  while (pubLoad().companies.some((c) => c.slug === t && c.id !== id)) t = s + "-" + n++;
+  return t;
+}
+function socialsOf(b) {
+  const o = {};
+  for (const k of SOCIALS) b && b[k] && webUrl(b[k]) && (o[k] = webUrl(b[k]));
+  return o;
+}
+function companyFields(c, b) {
+  for (const [k, n] of [["category", 40], ["description", 1500], ["city", 80], ["address", 160], ["phone", 40], ["email", 120], ["deal", 200], ["code", 40]]) k in b && (c[k] = clip(b[k], n));
+  "website" in b && (c.website = webUrl(b.website));
+  "socials" in b && (c.socials = socialsOf(b.socials));
+  return c;
+}
+function companySave(b) {
+  const L = pubLoad().companies,
+    old = b.id && L.find((x) => x.id === b.id),
+    c = old || { id: id36(), at: Date.now(), live: !0, featured: !1 },
+    name = clip(b.name, 80) || c.name;
+  if (!name) throw Object.assign(new Error("A company needs a name."), { code: 400 });
+  if (!old || name !== c.name) c.slug = uniqueSlug(name, c.id);
+  c.name = name;
+  companyFields(c, b);
+  "featured" in b && (c.featured = !!b.featured);
+  "live" in b && (c.live = !!b.live);
+  c.u = Date.now();
+  old || L.push(c);
+  pubSave();
+  return c;
+}
+// a picture or a song saved under its own fingerprint, so publishing never sends one twice
+const PUBTYPES = { png: "img", jpg: "img", jpeg: "img", webp: "img", mp3: "song", m4a: "song", aac: "song", ogg: "song", oga: "song", opus: "song", wav: "song", flac: "song" };
+async function pubFile(req, name, kind) {
+  const ext = path.extname(String(name || "")).slice(1).toLowerCase();
+  if (PUBTYPES[ext] !== (kind === "song" ? "song" : "img")) throw Object.assign(new Error(kind === "song" ? "Send an MP3, M4A, OGG, WAV or FLAC file." : "Send a PNG, JPG or WEBP picture."), { code: 400 });
+  const max = kind === "song" ? 80e6 : 6e6;
+  if (+req.headers["content-length"] > max) throw Object.assign(new Error(kind === "song" ? "Songs up to 80 MB." : "Pictures up to 6 MB."), { code: 400 });
+  const tmp = path.join(PUBDIR(), ".in-" + id36());
+  const size = await receive(req, tmp);
+  if (size > max) throw (await fsp.rm(tmp, { force: !0 }), Object.assign(new Error("That file is too big."), { code: 400 }));
+  const file = sha(fs.readFileSync(tmp)).slice(0, 16) + "." + (ext === "jpeg" ? "jpg" : ext);
+  await fsp.rename(tmp, path.join(PUBDIR(), file));
+  return file;
+}
+function pubFromB64(b64, mime) {
+  const ext = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp" }[mime];
+  if (!ext || !b64) return "";
+  const buf = Buffer.from(String(b64), "base64");
+  if (!buf.length || buf.length > 1.5e6) return "";
+  const file = sha(buf).slice(0, 16) + "." + ext;
+  fs.mkdirSync(PUBDIR(), { recursive: !0 });
+  fs.writeFileSync(path.join(PUBDIR(), file), buf);
+  return file;
+}
+// tell the owner's devices
+function pubNotify(title, body) {
+  const owners = new Set(U.users.filter((u) => u.role === "owner").map((u) => u.id));
+  for (const d of DV.devices) owners.has(d.user) && d.push && pushTo(d, { title, body, tag: "pub" });
+  broadcast({ type: "pub" }, (c) => c.user.role === "owner");
+}
+// ---- publishing to the website through GitHub
+const ghTok = () => readJson(hubf("github.json"), {}).token || "";
+async function gh(p, o) {
+  const cfg = C.publish || {},
+    r = await fetch((process.env.WB_GH_API || "https://api.github.com") + (p.startsWith("/repos") || p.startsWith("/user") ? p : "/repos/" + cfg.repo + p), {
+      method: (o && o.method) || "GET",
+      headers: { Authorization: "Bearer " + ((o && o.token) || ghTok()), Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "WorkbenchHub/" + VERSION, "Content-Type": "application/json" },
+      body: o && o.body ? JSON.stringify(o.body) : void 0,
+      signal: AbortSignal.timeout((o && o.ms) || 60000),
+    });
+  const t = await r.text();
+  let j = null;
+  try {
+    j = JSON.parse(t);
+  } catch {}
+  if (!r.ok) throw Object.assign(new Error("GitHub said " + r.status + ": " + ((j && j.message) || t).slice(0, 160)), { code: 502 });
+  return j;
+}
+async function pubSetup(b) {
+  const repo = clip(b.repo, 120).replace(/^https?:\/\/github\.com\//i, "").replace(/\.git$|\/+$/g, ""),
+    token = clip(b.token, 300);
+  if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) throw Object.assign(new Error("The repository looks like owner/name, for example you/workbench."), { code: 400 });
+  if (!token) throw Object.assign(new Error("Paste the GitHub key (token)."), { code: 400 });
+  const info = await gh("/repos/" + repo, { token });
+  if (!info.permissions || !info.permissions.push) throw Object.assign(new Error("That key can't write to " + repo + ". Give it Contents: Read and write."), { code: 400 });
+  writeJson(hubf("github.json"), { token });
+  C.publish = { repo, branch: clip(b.branch, 60) || info.default_branch || "main", dir: "public" };
+  writeJson(CONF, C);
+  log("Publishing set up for", repo);
+  return { repo, branch: C.publish.branch };
+}
+function pubData() {
+  const S = pubLoad(),
+    m = (f) => (f ? "media/" + f : ""),
+    live = S.companies.filter((c) => c.live !== !1),
+    tracks = S.tracks.filter((t) => t.status === "approved" && t.file);
+  S.radioEpoch ||= Date.now();
+  return {
+    v: 1,
+    at: Date.now(),
+    inbox: C.inbox && C.inboxUrl ? C.inboxUrl : "",
+    companies: live.map((c) => ({ id: c.id, slug: c.slug, name: c.name, category: c.category || "", description: c.description || "", city: c.city || "", address: c.address || "", phone: c.phone || "", email: c.email || "", website: c.website || "", socials: c.socials || {}, deal: c.deal || "", code: c.code || "", featured: !!c.featured, logo: m(c.logo) })),
+    spotlight: tracks.length || S.artist.name ? { artist: { name: S.artist.name || "", bio: S.artist.bio || "", photo: m(S.artist.photo), socials: S.artist.socials || {} }, epoch: S.radioEpoch, tracks: tracks.map((t) => ({ id: t.id, title: t.title, dur: t.dur || 0, file: m(t.file), cover: m(t.cover), at: t.at })) } : null,
+  };
+}
+let publishing = null;
+async function publish() {
+  if (publishing) return publishing;
+  return (publishing = (async () => {
+    const cfg = C.publish;
+    if (!cfg || !cfg.repo || !ghTok()) throw Object.assign(new Error("Set up publishing first (the GitHub key)."), { code: 400 });
+    const S = pubLoad(),
+      data = pubData(),
+      dir = cfg.dir || "public",
+      want = new Set();
+    for (const c of data.companies) c.logo && want.add(c.logo.slice(6));
+    if (data.spotlight) {
+      data.spotlight.artist.photo && want.add(data.spotlight.artist.photo.slice(6));
+      for (const t of data.spotlight.tracks) (want.add(t.file.slice(6)), t.cover && want.add(t.cover.slice(6)));
+    }
+    const ref = await gh("/git/ref/heads/" + cfg.branch),
+      base = ref.object.sha,
+      commit = await gh("/git/commits/" + base),
+      tree = [],
+      sent = Object.assign({}, S.published.files);
+    for (const f of want) {
+      const p = dir + "/media/" + f;
+      if (sent[p]) continue;
+      const blob = await gh("/git/blobs", { method: "POST", body: { content: fs.readFileSync(path.join(PUBDIR(), f)).toString("base64"), encoding: "base64" }, ms: 600000 });
+      tree.push({ path: p, mode: "100644", type: "blob", sha: blob.sha });
+      sent[p] = blob.sha;
+    }
+    tree.push({ path: dir + "/data.json", mode: "100644", type: "blob", content: JSON.stringify(data) });
+    const nt = await gh("/git/trees", { method: "POST", body: { base_tree: commit.tree.sha, tree } }),
+      nc = await gh("/git/commits", { method: "POST", body: { message: "Workbench: publish Discover and Spotlight", tree: nt.sha, parents: [base] } });
+    await gh("/git/refs/heads/" + cfg.branch, { method: "PATCH", body: { sha: nc.sha } });
+    S.published = { at: Date.now(), commit: nc.sha, files: sent, companies: data.companies.length, tracks: data.spotlight ? data.spotlight.tracks.length : 0 };
+    pubSave();
+    log("Published", data.companies.length, "companies and", S.published.tracks, "tracks");
+    return S.published;
+  })().finally(() => (publishing = null)));
+}
+// ---- the public inbox (Tailscale Funnel → 127.0.0.1:8771)
+function runAll(cmds, args, ms) {
+  return new Promise((done) => {
+    const list = [].concat(cmds),
+      next = (i) => {
+        if (i >= list.length) return done({ ok: !1, out: "Tailscale isn't installed or didn't answer." });
+        execFile(list[i], args, { timeout: ms || 20000, windowsHide: !0 }, (e, out, err) => (e && e.code === "ENOENT" ? next(i + 1) : done({ ok: !e, out: (String(out || "") + "\n" + String(err || "")).trim() })));
+      };
+    next(0);
+  });
+}
+const TSCLI = WIN ? ["tailscale", "C:\\Program Files\\Tailscale\\tailscale.exe"] : ["tailscale"];
+async function inboxSet(on) {
+  const port = C.inboxPort || 8771,
+    r = await runAll(TSCLI, on ? ["funnel", "--bg", "--https=8443", "http://127.0.0.1:" + port] : ["funnel", "--https=8443", "off"]);
+  let host = "";
+  if (on) {
+    try {
+      host = String(JSON.parse((await runAll(TSCLI, ["status", "--json"], 8000)).out).Self.DNSName || "").replace(/\.$/, "");
+    } catch {}
+  }
+  C.inbox = !!(on && r.ok);
+  C.inboxUrl = C.inbox && host ? "https://" + host + ":8443" : "";
+  writeJson(CONF, C);
+  log("Inbox", C.inbox ? "on at " + C.inboxUrl : "off");
+  return { on: C.inbox, url: C.inboxUrl, out: r.out.slice(0, 600) };
+}
+const inboxHits = new Map();
+function inboxLimit(req) {
+  const ip = String(req.headers["x-forwarded-for"] || req.socket.remoteAddress || "?").split(",")[0].trim(),
+    now = Date.now(),
+    a = (inboxHits.get(ip) || []).filter((t) => now - t < 3600000);
+  if (a.length >= 6) throw Object.assign(new Error("Too many in a short time. Try again in an hour."), { code: 429 });
+  a.push(now);
+  inboxHits.set(ip, a);
+}
+async function inboxRoute(req, res) {
+  const url = new URL(req.url, "http://inbox"),
+    o = req.headers.origin && allowOrigin(req.headers.origin);
+  res.setHeader("Vary", "Origin");
+  if (o) (res.setHeader("Access-Control-Allow-Origin", o), res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS"), res.setHeader("Access-Control-Allow-Headers", "Content-Type"));
+  if (req.method === "OPTIONS") return (res.writeHead(204), res.end());
+  if (url.pathname === "/ping") return json(res, 200, { ok: !0 });
+  if (req.method !== "POST" || (url.pathname !== "/apply" && url.pathname !== "/message")) return fail(res, 404, "Not here.");
+  const b = await jsonBody(req, 2.2e6),
+    S = pubLoad();
+  if (b.website2) return json(res, 200, { ok: !0 });
+  inboxLimit(req);
+  if (url.pathname === "/apply") {
+    if (S.apps.length >= 300) return fail(res, 503, "Applications are full right now. Try again later.");
+    const a = companyFields({ id: id36(), at: Date.now(), name: clip(b.name, 80), note: clip(b.note, 1000), contact: clip(b.contact, 160) }, b);
+    if (!a.name || !a.contact) return fail(res, 400, "Your company's name and a way to reach you are needed.");
+    a.logo = pubFromB64(b.logo, b.logoType);
+    S.apps.push(a);
+    pubSave();
+    log("Application:", a.name);
+    pubNotify("New company application", a.name + (a.category ? " · " + a.category : ""));
+    return json(res, 200, { ok: !0 });
+  }
+  if (S.msgs.length >= 1000) return fail(res, 503, "Messages are full right now. Try again later.");
+  const c = S.companies.find((x) => x.slug === clip(b.company, 60) && x.live !== !1),
+    m = { id: id36(), at: Date.now(), company: c ? c.slug : "", companyName: c ? c.name : "", name: clip(b.name, 80), contact: clip(b.contact, 160), text: clip(b.text, 2000) };
+  if (!c || !m.text || !m.contact) return fail(res, 400, "Write a message and a way to reach you.");
+  S.msgs.push(m);
+  pubSave();
+  log("Message for", c.name);
+  pubNotify("Message for " + c.name, (m.name ? m.name + ": " : "") + m.text.slice(0, 120));
+  return json(res, 200, { ok: !0 });
+}
+// what the owner (everything) or the Spotlight artist (the artist and the tracks) gets
+function pubView(u) {
+  const S = pubLoad();
+  if (u.role === "owner")
+    return Object.assign({}, S, { publish: C.publish ? { repo: C.publish.repo, branch: C.publish.branch, key: !!ghTok() } : null, inbox: { on: !!C.inbox, url: C.inboxUrl || "" }, owner: !0 });
+  return { artist: S.artist, tracks: S.tracks, owner: !1 };
+}
+
 // ---- the routes ---------------------------------------------------------------------------------
 async function route(req, res) {
   const url = new URL(req.url, "http://hub"),
@@ -970,6 +1220,116 @@ async function route(req, res) {
       log("AI", b.do || "unload", m);
       return json(res, 200, { ok: !0, ai: await aiInfo() });
     }
+    // ---- Discover and Spotlight (the owner; the Spotlight artist for the music)
+    case "/api/pub":
+      if (!owner && !u.artist) return fail(res, 403, "Only the owner and the Spotlight artist.");
+      return json(res, 200, pubView(u));
+    case "/api/pub/media": {
+      if (!owner && !u.artist) return fail(res, 403, "Only the owner and the Spotlight artist.");
+      const f = String(url.searchParams.get("f") || "");
+      if (!/^[0-9a-f]{16}\.[a-z0-9]+$/.test(f)) return fail(res, 400, "No such file.");
+      return sendFile(req, res, path.join(PUBDIR(), f));
+    }
+    case "/api/pub/company": {
+      if (!owner) return fail(res, 403, "Only the owner lists companies.");
+      if (M === "DELETE") {
+        const S = pubLoad();
+        S.companies = S.companies.filter((c) => c.id !== url.searchParams.get("id"));
+        pubSave();
+        return json(res, 200, pubView(u));
+      }
+      if (M === "POST") return (companySave(await jsonBody(req, 5e4)), json(res, 200, pubView(u)));
+      break;
+    }
+    case "/api/pub/file": {
+      if (M !== "PUT" && M !== "POST") break;
+      const kind = url.searchParams.get("kind"),
+        forId = url.searchParams.get("for") || "",
+        S = pubLoad();
+      if (!["logo", "photo", "cover", "song"].includes(kind)) return fail(res, 400, "What kind of file?");
+      if (kind === "logo" ? !owner : !(owner || u.artist)) return fail(res, 403, "That isn't yours to change.");
+      const t = kind === "cover" && S.tracks.find((x) => x.id === forId),
+        co = kind === "logo" && S.companies.find((x) => x.id === forId);
+      if (kind === "cover" && (!t || (!owner && t.by !== u.id))) return fail(res, 404, "No such track.");
+      if (kind === "logo" && !co) return fail(res, 404, "No such company.");
+      const file = await pubFile(req, url.searchParams.get("name"), kind === "song" ? "song" : "img");
+      if (kind === "logo") co.logo = file;
+      else if (kind === "photo") S.artist.photo = file;
+      else if (kind === "cover") t.cover = file;
+      else S.tracks.push({ id: id36(), title: clip(url.searchParams.get("title") || path.parse(String(url.searchParams.get("name") || "Track")).name, 100), file, dur: Math.max(0, Math.min(3600, +url.searchParams.get("dur") || 0)), status: owner ? "approved" : "pending", by: u.id, byName: u.name, at: Date.now() });
+      pubSave();
+      kind === "song" && !owner && pubNotify("A Spotlight track to approve", u.name + " added a song.");
+      return json(res, 200, pubView(u));
+    }
+    case "/api/pub/track": {
+      const S = pubLoad(),
+        b = M === "DELETE" ? { id: url.searchParams.get("id") } : await jsonBody(req, 2e4),
+        t = S.tracks.find((x) => x.id === b.id);
+      if (!t || !(owner || (u.artist && t.by === u.id))) return fail(res, 404, "No such track.");
+      if (M === "DELETE") {
+        if (!owner && t.status === "approved") return fail(res, 403, "Ask the owner to take down a track that's already approved.");
+        S.tracks = S.tracks.filter((x) => x !== t);
+      } else {
+        "title" in b && (t.title = clip(b.title, 100) || t.title);
+        "dur" in b && (t.dur = Math.max(0, Math.min(3600, +b.dur || 0)));
+        owner && "status" in b && (t.status = b.status === "approved" ? "approved" : "pending");
+      }
+      pubSave();
+      return json(res, 200, pubView(u));
+    }
+    case "/api/pub/artist": {
+      if (!owner && !u.artist) return fail(res, 403, "Only the owner and the Spotlight artist.");
+      const b = await jsonBody(req, 2e4),
+        A = pubLoad().artist;
+      "name" in b && (A.name = clip(b.name, 80));
+      "bio" in b && (A.bio = clip(b.bio, 1500));
+      "socials" in b && (A.socials = socialsOf(b.socials));
+      pubSave();
+      return json(res, 200, pubView(u));
+    }
+    case "/api/pub/app": {
+      if (!owner) return fail(res, 403, "Only the owner.");
+      const b = await jsonBody(req, 1e4),
+        S = pubLoad(),
+        a = S.apps.find((x) => x.id === b.id);
+      if (!a) return fail(res, 404, "No such application.");
+      S.apps = S.apps.filter((x) => x !== a);
+      if (b.do === "approve") {
+        const c = companySave(Object.assign({}, a, { id: void 0 }));
+        ((c.logo = a.logo || ""), (c.contact = a.contact || ""), (c.from = "application"));
+      }
+      pubSave();
+      return json(res, 200, pubView(u));
+    }
+    case "/api/pub/msg": {
+      if (!owner) return fail(res, 403, "Only the owner.");
+      const b = await jsonBody(req, 1e4),
+        S = pubLoad();
+      S.msgs = S.msgs.filter((x) => x.id !== b.id);
+      pubSave();
+      return json(res, 200, pubView(u));
+    }
+    case "/api/pub/setup":
+      if (!owner) return fail(res, 403, "Only the owner.");
+      if (M !== "POST") break;
+      {
+        const r = await pubSetup(await jsonBody(req, 1e4));
+        return json(res, 200, Object.assign(pubView(u), { setup: r }));
+      }
+    case "/api/pub/publish":
+      if (!owner) return fail(res, 403, "Only the owner publishes.");
+      if (M !== "POST") break;
+      {
+        const r = await publish();
+        return json(res, 200, Object.assign(pubView(u), { done: r }));
+      }
+    case "/api/pub/inbox":
+      if (!owner) return fail(res, 403, "Only the owner.");
+      if (M !== "POST") break;
+      {
+        const r = await inboxSet(!!(await jsonBody(req, 1e3)).on);
+        return json(res, 200, Object.assign(pubView(u), { inboxResult: r }));
+      }
     case "/api/me/pin": {
       const b = await jsonBody(req, 1e4);
       if (pinHash(String(b.old || ""), u.salt) !== u.hash) return fail(res, 401, "Your current PIN isn't right.");
@@ -990,6 +1350,7 @@ async function route(req, res) {
       if (M === "POST") {
         const b = await jsonBody(req, 1e4);
         const nu = addUser(b.name, b.pin, "member", !!b.work);
+        b.artist && ((nu.artist = !0), saveUsers());
         log("Added", nu.name);
         return json(res, 200, { user: pub(nu) });
       }
@@ -1000,6 +1361,7 @@ async function route(req, res) {
         if (x.role === "owner") return fail(res, 400, "The owner can't be changed or removed here.");
         if (M === "PATCH") {
           "work" in b && (x.work = !!b.work);
+          "artist" in b && (x.artist = !!b.artist);
           b.pin && setPin(x, b.pin);
           saveUsers();
           return json(res, 200, { user: pub(x) });
@@ -1272,6 +1634,11 @@ function main() {
     process.exit(e.code === "EADDRINUSE" ? 2 : 1);
   });
   srv.listen(C.port, C.host, () => log("Workbench Hub", VERSION, "on http://" + C.host + ":" + C.port, "· folder", C.root));
+  // the public inbox: only company applications and messages (shared to the internet by Tailscale Funnel)
+  const ib = http.createServer((req, res) => inboxRoute(req, res).catch((e) => fail(res, typeof e.code === "number" ? e.code : 500, e.message || "Something went wrong.")));
+  ib.requestTimeout = 30000;
+  ib.on("error", (e) => log("Inbox can't start:", e.message));
+  ib.listen(C.inboxPort || 8771, "127.0.0.1");
   setTimeout(checkReminders, 20000);
   setInterval(() => checkReminders().catch((e) => log("reminders:", e.message)), 10 * 60000);
   setInterval(() => makeDigest().catch((e) => log("digest:", e.message)), 60 * 60000);

@@ -25,6 +25,8 @@ self.addEventListener("fetch", (e) => {
   if (req.method !== "GET") return;
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
+  // Spotlight's songs and pictures stream straight from the site (not kept in the app's copy)
+  if (url.pathname.includes("/public/media/")) return;
   const key = url.origin + (url.pathname.endsWith("/") ? url.pathname + "index.html" : url.pathname);
   e.respondWith(
     (async () => {

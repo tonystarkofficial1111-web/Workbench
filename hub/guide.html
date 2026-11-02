@@ -56,7 +56,7 @@ th{font:700 11px var(--head);letter-spacing:.12em;text-transform:uppercase;color
 <div class="k">Workbench · the rig</div>
 <h1>Set up the rig</h1>
 <p class="lead">From nothing to everything: the rig at home runs the AI, the Workbench Hub and holds all your music and videos. Your laptop and phone reach it through Tailscale, at home or away, and can keep songs for offline.</p>
-<nav class="toc"><a href="#start">Start here</a><a href="#w">W · The app</a><a href="#a">A · Prepare</a><a href="#b">B · Tailscale</a><a href="#c">C · Big folder</a><a href="#d">D · Hub + AI</a><a href="#e">E · Check AI</a><a href="#r">R · Rig tab</a><a href="#f">F · Laptop</a><a href="#g">G · Phone</a><a href="#h">H · Music</a><a href="#i">I · Leave it on</a><a href="#fix">Fixes</a></nav>
+<nav class="toc"><a href="#start">Start here</a><a href="#w">W · The app</a><a href="#a">A · Prepare</a><a href="#b">B · Tailscale</a><a href="#c">C · Big folder</a><a href="#d">D · Hub + AI</a><a href="#e">E · Check AI</a><a href="#r">R · Rig tab</a><a href="#s">S · Discover + Spotlight</a><a href="#f">F · Laptop</a><a href="#g">G · Phone</a><a href="#h">H · Music</a><a href="#i">I · Leave it on</a><a href="#fix">Fixes</a></nav>
 <section id="start">
 <h2><span>0</span> Start here</h2>
 <p class="why">You need about two hours in total, most of it waiting for downloads and copying. Do the parts in order: each one needs the one before.</p>
@@ -165,6 +165,20 @@ th{font:700 11px var(--head);letter-spacing:.12em;text-transform:uppercase;color
 <li><input type="checkbox"><div class="t">Songs or videos somewhere else on the rig (a USB stick, Downloads)? <b>Put files on the rig</b> → <b>Add music</b> or <b>Add videos</b> → pick them → <b>Open</b>. Tick <b>Put them in Shared</b> first if they're for the whole family.</div></li>
 <li><input type="checkbox"><div class="t">The <b>AI</b> panel shows the model. <b>Load</b> gets it ready on the graphics card so the first answer is quick; <b>Let go</b> frees the card for a game.</div></li>
 <li><input type="checkbox"><div class="t">On the laptop or the phone the Rig tab shows the same numbers, and Manage the rig says <b>Only on the rig</b>. That's on purpose. <span class="step-sub">If it says that on the rig itself, click <b>This device is the rig</b>.</span></div></li>
+</ol>
+</section>
+
+<section id="s">
+<h2><span>S</span> Discover and Spotlight</h2>
+<p class="why">About 15 minutes, once. <b>Discover</b> lists companies for everyone who opens Workbench; <b>Spotlight</b> plays your buddy's songs. You add and approve everything on the rig, then <b>Publish</b> puts it on the Workbench website, so it's there even while the rig is off.</p>
+<ol class="steps">
+<li><input type="checkbox"><div class="t"><b>Make a GitHub key</b> (it lets the rig update the website, and nothing else). On <b>github.com</b>: your picture (top right) → <b>Settings</b> → <b>Developer settings</b> (bottom left) → <b>Personal access tokens</b> → <b>Fine-grained tokens</b> → <b>Generate new token</b>. Name: <code>Workbench rig</code>. Expiration: 1 year. <b>Repository access</b> → <b>Only select repositories</b> → your <b>workbench</b> repository. <b>Permissions</b> → <b>Repository permissions</b> → <b>Contents</b> → <b>Read and write</b>. Click <b>Generate token</b> and copy it (it starts with <code>github_pat_</code>).</div></li>
+<li><input type="checkbox"><div class="t">On the rig: Workbench → <b>Rig</b> → <b>Manage the rig</b> (type the access code) → <b>Website</b>. The repository is filled in; paste the key → <b>Connect</b>. It says <b>Connected</b>.</div></li>
+<li><input type="checkbox"><div class="t">Same place: <b>Open the inbox</b>. That's where "List your company" applications and messages to companies arrive. <span class="step-sub">If a Tailscale link shows up below, open it, click <b>Enable</b> (it turns on Funnel for the rig), then press <b>Open the inbox</b> again.</span></div></li>
+<li><input type="checkbox"><div class="t"><b>Discover</b> → <b>Add a company</b>: name, category, city, phone, website, Instagram and so on, a description, and a deal or code if they have one. <b>Save</b>, then <b>Logo…</b> to add their logo. <b>Feature</b> puts a paid company at the top with a Featured tag. <b>Copy link</b> gives you the company's own link to send them: people who open it land on that company, and it's counted for them.</div></li>
+<li><input type="checkbox"><div class="t"><b>Your buddy:</b> <b>Rig</b> → <b>People</b> → his name and a PIN, tick <b>Spotlight artist</b> → <b>Add person</b>. He installs Tailscale and you share the rig with him (Tailscale admin → <b>Machines</b> → rig → <b>⋯</b> → <b>Share…</b>). In Workbench he taps his picture → <b>Hub</b> → the Hub address, his name and PIN. Then <b>Spotlight</b> → <b>Your Spotlight</b> → <b>Add songs</b>, his profile and photo.</div></li>
+<li><input type="checkbox"><div class="t">You: <b>Spotlight</b> → <b>Manage Spotlight</b> → <b>Approve</b> his songs (yours are approved straight away) → <b>Publish now</b>. Or <b>Rig</b> → <b>Website</b> → <b>Publish now</b>. The website shows it about a minute later.</div></li>
+<li><input type="checkbox"><div class="t">When a company applies or someone messages a company, your phone gets a notification, and it waits in <b>Rig</b> → <b>Discover</b>: <b>Approve</b> or <b>Turn down</b> applications, and <b>Passed on</b> once you've forwarded a message. Publish again after changes.</div></li>
 </ol>
 </section>
 
