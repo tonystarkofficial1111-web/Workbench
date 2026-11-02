@@ -51,18 +51,18 @@ For family members, either:
 - if they have their own Tailscale account, share the rig with them: Tailscale admin → Machines → the rig → ⋯ → Share.
 
 ### 4. Sign in on each device
-1. In Workbench, press the **bell** at the top right, then **Connect the Hub**.
+1. In Workbench, press **your picture** at the top right (the menu), then **Hub**.
 2. Enter the address, your name and your PIN, then press **Connect**.
 3. Start with the laptop, because its Work folder goes up to the rig first.
 4. Then do the phone: Work, design files, saves and settings come over by themselves. Open Work with your usual Work PIN.
 
 ### 5. Phone notifications
-On the phone, in the Workbench app: bell → Hub → **Notifications on this device** → **Turn on** → Allow. Then press **Send a test**.
+On the phone, in the Workbench app: your picture (top right) → Hub → **Notifications on this device** → **Turn on** → Allow. Then press **Send a test**.
 
 ### The Rig tab
-Workbench has a **Rig** tab on the rail down the left. It shows the rig's health live: how busy the processor and graphics card are, memory, storage left on every drive, the graphics card's temperature and what's using it, the AI and its models, the devices on Tailscale, and how many people use the Hub (online now, today, this week).
+Workbench has a **Rig** tab on the rail down the left. It shows the rig's health live: how busy the processor and graphics card are, memory, storage left on every drive, the graphics card's temperature, the AI and its models, and how many people use the Hub (online now, today, this week). Nothing private is shown or even sent: no addresses, folder paths, drive letters, driver version, programs or private network.
 
-Changes to the rig are made from Workbench **on the rig itself**: its folders, its people (add, new PIN, allow Work, remove, sign a device out), adding music and videos, and loading or letting go of the AI's model. On the laptop and the phone the Rig tab is view-only. The Hub knows a request comes from the rig because Tailscale passes along who is asking.
+Changes to the rig are made from Workbench **on the rig itself**, after typing the Assistant's access code: its folders, its people (add, new PIN, allow Work, remove, sign a device out), adding music and videos, and loading or letting go of the AI's model. On the laptop and the phone the Rig tab is view-only. The Hub knows a request comes from the rig because Tailscale passes along who is asking.
 
 ### 6. Family
 On the rig, in the **Rig** tab under **People**, add each person with their own PIN. They sign in on their own device with that name and PIN. Each person sees only their own music, videos and saves. Work stays with you and the people you tick as **Can open Work**, and it still asks for the Work PIN.
@@ -79,7 +79,7 @@ To play them:
 - **For DJing:** Work → DJ → Library → **Rig library**. The tracks play on whichever computer is DJing.
 
 ### Your own big folder
-Got one folder with everything in it? Give its path to the installer, or add it later on the rig: **Rig** tab → **Folders on the rig** → **Add a folder…**, then click through the rig's drives to it.
+Got one folder with everything in it? Give its path to the installer, or add it later on the rig: **Rig** tab → **Folders on the rig** → paste the folder's address (or **Browse…** through the rig's drives).
 
 - **Nothing is moved or copied:** it's read where it is, and new files show up by themselves.
 - **What it picks out:** music and videos, by their folder names (Music, Songs, DJ, Videos, Movies…) and file types.
@@ -94,7 +94,7 @@ In Media → Rig library → **Save from a link**, paste a link to an MP3 or MP4
 The rig downloads it into your Music or Videos, even while your devices are off. Streaming sites (YouTube, Spotify, SoundCloud…) aren't downloaded from.
 
 ### 8. Move the AI off the laptop
-1. On every device: bell → Hub → **Use the rig's AI here**.
+1. On every device: your picture (top right) → Hub → **Use the rig's AI here**.
 2. On the laptop, uninstall Ollama: Settings → Apps → Installed apps → Ollama → Uninstall.
 3. Delete the `.ollama` folder in your user folder. It holds the models, which are several GB.
 4. You can also delete the OLLAMA_ORIGINS and OLLAMA_HOST environment variables. They're no longer needed.

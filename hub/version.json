@@ -1,8 +1,8 @@
 {
- "version": "1.2.0",
- "app": "6.4.1",
+ "version": "1.2.1",
+ "app": "6.5.0",
  "files": {
-  "server.js": "2402f54f665c16eb76a8a1cddf302b8c21812dfad4c6e8c8576f83308c4324c0",
+  "server.js": "6a906feb4062e8cf4cc75d15b15ecb2dcc1c7e206cd77d16ea32e7b7d85bcf49",
   "push.js": "bb578b9dd5f09389a6539ece0aaf2c61e0b89a88d91e5ac440f0021d9aa157e2",
   "tags.js": "554332204e63cf6866548a47d81c3e4ef904dbe785e973700f7210a7c1fd99f5",
   "reminders.js": "8afbc6d1cd55c1674c50f7aacb90068a3b7d6b50b890475654bd2a3839d57a1c",
@@ -10,6 +10,6 @@
   "launch.vbs": "dec0e57b4a5c2db94576f1d20dff80972db13f1720d5c3d90a798dfc0e349ee5",
   "hub.ico": "877b7befcb15c507262b8b092545b740875f110d736193d21251d30e0aa6fdb2",
   "uninstall.ps1": "9f606763aab934aab2a1d808876edad569dfb3600cc325032408be7577d27c8e",
-  "README.md": "7e185574c2b9e849098a23fce73bc74e531e44380f73bade1751a1d7992c5d00"
+  "README.md": "dbfb6bc2217c0d2f9bd425c0099ff2bc7d9b5396a7ec6e0f5f08b193db8d23cc"
  }
 }

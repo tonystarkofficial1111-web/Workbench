@@ -17,7 +17,7 @@ const http = require("http"),
   { readTags } = require("./tags.js"),
   { __wbReminders } = require("./reminders.js");
 
-const VERSION = "1.2.0";
+const VERSION = "1.2.1";
 const HOME = process.env.WB_HUB_HOME || path.join(__dirname, "..");
 const CONF = process.env.WB_HUB_CONFIG || path.join(HOME, "hub.json");
 const APP = "https://tonystarkofficial1111-web.github.io";
@@ -740,17 +740,13 @@ function statusPage(req, res) {
     html =
       '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Workbench Hub</title><style>body{margin:0;background:#101114;color:#eef1f5;font:15px/1.5 system-ui,Segoe UI,sans-serif}main{max-width:640px;margin:8vh auto;padding:0 20px}h1{font-size:34px;margin:0 0 4px;letter-spacing:-.01em}.k{color:#9aa2ae;text-transform:uppercase;font-size:12px;letter-spacing:.16em}.ok{color:#7dffa8}ul{padding-left:18px}a{color:#7dffa8}code{background:#1d2026;padding:2px 6px}</style><main><div class="k">// Workbench Hub ' +
       VERSION +
-      '</div><h1>Running <span class="ok">●</span></h1><p>This is the home server on <b>' +
-      esc(C.name) +
-      "</b>. Open Workbench on any of your devices and connect to this address: the bell at the top right → Hub.</p><ul><li>" +
+      '</div><h1>Running <span class="ok">●</span></h1><p>This is your Workbench home server. Open Workbench on any of your devices and connect to this address: the menu at the top right → Hub.</p><ul><li>' +
       U.users.length +
       " people · " +
       DV.devices.length +
       " devices signed in</li><li>Work data: " +
       (work ? Math.round(work.length / 1024) + " KB" : "none yet") +
-      "</li><li>Folder: <code>" +
-      esc(C.root) +
-      '</code></li></ul><p><a href="' +
+      '</li></ul><p><a href="' +
       APP +
       '/Workbench/">Open Workbench</a></p></main>';
   res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
@@ -758,6 +754,8 @@ function statusPage(req, res) {
 }
 
 // ---- the rig's health (the Rig tab in Workbench) -------------------------------------------------
+// Only what's safe on a screen other people look at: no addresses, paths, drive letters, driver
+// versions, programs on the graphics card or the private network (1.2.1).
 const { execFile } = require("child_process");
 const STARTED = Date.now();
 const UPD = { checked: 0, latest: "", err: "" };
@@ -774,7 +772,6 @@ function runOut(cmds, args, ms) {
 }
 const WIN = process.platform === "win32";
 const NVSMI = WIN ? ["nvidia-smi", "C:\\Windows\\System32\\nvidia-smi.exe", "C:\\Program Files\\NVIDIA Corporation\\NVSMI\\nvidia-smi.exe"] : ["nvidia-smi"];
-const TSCLI = WIN ? ["tailscale", "C:\\Program Files\\Tailscale\\tailscale.exe"] : ["tailscale"];
 const num = (s) => {
   const n = parseFloat(String(s).trim());
   return isFinite(n) ? n : null;
@@ -801,25 +798,14 @@ async function gpuInfo() {
   if (Date.now() - gpuC.t < 2500) return gpuC.v;
   if (gpuC.p) return gpuC.p;
   return (gpuC.p = (async () => {
-    const out = await runOut(NVSMI, ["--query-gpu=name,driver_version,temperature.gpu,utilization.gpu,memory.used,memory.total,power.draw,power.limit,fan.speed", "--format=csv,noheader,nounits"], 5000);
+    const out = await runOut(NVSMI, ["--query-gpu=name,temperature.gpu,utilization.gpu,memory.used,memory.total,power.draw,power.limit,fan.speed", "--format=csv,noheader,nounits"], 5000);
     let cards = out
       .split(/\r?\n/)
       .filter((l) => l.trim())
       .map((l) => {
         const f = l.split(",").map((x) => x.trim());
-        return { name: f[0], driver: f[1], temp: num(f[2]), busy: num(f[3]), memUsed: num(f[4]), memTotal: num(f[5]), power: num(f[6]), powerMax: num(f[7]), fan: num(f[8]) };
+        return { name: f[0], temp: num(f[1]), busy: num(f[2]), memUsed: num(f[3]), memTotal: num(f[4]), power: num(f[5]), powerMax: num(f[6]), fan: num(f[7]) };
       });
-    if (cards.length) {
-      const ap = await runOut(NVSMI, ["--query-compute-apps=pid,process_name,used_memory", "--format=csv,noheader,nounits"], 5000);
-      cards[0].apps = ap
-        .split(/\r?\n/)
-        .filter((l) => l.trim())
-        .map((l) => {
-          const f = l.split(",").map((x) => x.trim());
-          return { pid: num(f[0]), name: path.basename(String(f[1] || "").replace(/\\/g, "/")), mem: num(f[2]) };
-        })
-        .slice(0, 12);
-    }
     gpuC.v = cards.length ? cards : null;
     gpuC.t = Date.now();
     gpuC.p = null;
@@ -837,10 +823,9 @@ async function aiGet(p, ms) {
 }
 async function aiInfo() {
   const [v, tags, ps] = await Promise.all([aiGet("/api/version"), aiGet("/api/tags"), aiGet("/api/ps")]);
-  if (!v && !tags) return { up: !1, url: C.ollama };
+  if (!v && !tags) return { up: !1 };
   return {
     up: !0,
-    url: C.ollama,
     version: (v && v.version) || "",
     models: ((tags && tags.models) || []).map((m) => ({ name: m.name, size: m.size, at: Date.parse(m.modified_at) || 0, params: (m.details && m.details.parameter_size) || "", quant: (m.details && m.details.quantization_level) || "" })),
     loaded: ((ps && ps.models) || []).map((m) => ({ name: m.name, size: m.size, vram: m.size_vram, until: Date.parse(m.expires_at) || 0 })),
@@ -852,19 +837,6 @@ async function aiKeep(model, load) {
   if (!r) throw Object.assign(new Error("The AI isn't running on the rig."), { code: 502 });
   if (!r.ok) throw Object.assign(new Error("The AI said no: " + ((await r.text().catch(() => "")) || r.status).slice(0, 200)), { code: 502 });
   await r.text().catch(() => "");
-}
-// the devices on the private network (Tailscale), cached a little
-const tsC = { t: 0, v: null };
-async function tailnet() {
-  if (Date.now() - tsC.t < 15000) return tsC.v;
-  let j = null;
-  try {
-    j = JSON.parse(await runOut(TSCLI, ["status", "--json"], 5000));
-  } catch {}
-  const dev = (p, self) => ({ name: p.HostName || String(p.DNSName || "").split(".")[0], os: p.OS || "", online: self || !!p.Online, ip: (p.TailscaleIPs || [])[0] || "", seen: self ? Date.now() : Date.parse(p.LastSeen) > 0 ? Date.parse(p.LastSeen) : 0, self: !!self });
-  tsC.v = j && j.Self ? { state: j.BackendState || "", name: j.MagicDNSSuffix || "", self: dev(j.Self, !0), peers: Object.values(j.Peer || {}).map((p) => dev(p)).sort((a, b) => b.online - a.online || b.seen - a.seen) } : null;
-  tsC.t = Date.now();
-  return tsC.v;
 }
 // is this request coming from the rig itself? (the Hub only listens on the rig; Tailscale says who
 // is on the other end in X-Forwarded-For, and the rig's own addresses mean it's the rig)
@@ -890,7 +862,7 @@ function diskList() {
   for (const d of drives())
     try {
       const s = fs.statfsSync(d);
-      out.push({ path: d, free: s.bavail * s.bsize, size: s.blocks * s.bsize, hub: root.startsWith(d.toLowerCase()) && (d !== "/" || out.length === 0) });
+      out.push({ free: s.bavail * s.bsize, size: s.blocks * s.bsize, hub: root.startsWith(d.toLowerCase()) && (d !== "/" || out.length === 0) });
     } catch {}
   return out;
 }
@@ -927,7 +899,7 @@ function usage() {
   };
 }
 async function systemInfo(req) {
-  const [cpu, gpu, ai, net] = await Promise.all([cpuBusy(), gpuInfo(), aiInfo(), tailnet()]),
+  const [cpu, gpu, ai] = await Promise.all([cpuBusy(), gpuInfo(), aiInfo()]),
     c0 = os.cpus()[0] || {},
     mem = process.memoryUsage();
   const libs = libraries().map((l) => {
@@ -936,23 +908,22 @@ async function systemInfo(req) {
     try {
       exists = fs.statSync(l.path).isDirectory();
     } catch {}
-    return { label: l.label || path.basename(l.path), path: l.path, everyone: !!l.everyone, exists, music: c ? c.items.music.length : null, video: c ? c.items.video.length : null };
+    return { everyone: !!l.everyone, exists, music: c ? c.items.music.length : null, video: c ? c.items.video.length : null };
   });
   return {
     at: Date.now(),
     rig: fromRig(req),
-    machine: { name: os.hostname(), os: WIN ? "Windows " + os.release() : os.type() + " " + os.release(), arch: os.arch(), up: Math.round(os.uptime()) },
+    machine: { os: WIN ? "Windows " + os.release() : os.type() + " " + os.release(), arch: os.arch(), up: Math.round(os.uptime()) },
     cpu: { model: String(c0.model || "").replace(/\s+/g, " ").trim(), cores: os.cpus().length, busy: cpu, speed: c0.speed || 0 },
     ram: { total: os.totalmem(), free: os.freemem() },
     disks: diskList(),
     gpu,
     ai,
-    net,
     usage: usage(),
     libraries: libs,
     backup: lastBackup(),
     jobs: [...jobs.values()].filter((j) => j.state === "downloading" || j.state === "queued").length,
-    hub: { version: VERSION, up: Math.round((Date.now() - STARTED) / 1000), node: process.version, mem: mem.rss, root: C.root, port: C.port, autoUpdate: !!C.autoUpdate, update: UPD, name: C.name },
+    hub: { version: VERSION, up: Math.round((Date.now() - STARTED) / 1000), node: process.version, mem: mem.rss, autoUpdate: !!C.autoUpdate, update: { checked: UPD.checked, latest: UPD.latest } },
   };
 }
 
@@ -982,7 +953,7 @@ async function route(req, res) {
         const s = fs.statfsSync(C.root);
         disk = { free: s.bavail * s.bsize, size: s.blocks * s.bsize };
       } catch {}
-      return json(res, 200, { user: pub(u), device: { id: a.device.id, name: a.device.name, push: !!a.device.push }, hub: { name: C.name, version: VERSION, disk: owner ? disk : null, root: owner ? C.root : "", rig: fromRig(req) } });
+      return json(res, 200, { user: pub(u), device: { id: a.device.id, name: a.device.name, push: !!a.device.push }, hub: { name: C.name, version: VERSION, disk: owner ? disk : null, rig: fromRig(req) } });
     }
     case "/api/system": {
       if (!owner) return fail(res, 403, "Only the owner can see the rig's health.");

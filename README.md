@@ -26,7 +26,7 @@ To publish a new version, replace `index.html` in this repository with the new b
 
 ## Workbench Hub (the home server)
 
-The Hub runs on the computer that stays on at home. One folder there holds everything: Work, design files, music, videos and everyone's saves. Every device signs in once (the bell at the top right, then **Hub**) and keeps in step with it by itself, at home or away (through Tailscale). The Hub also sends phone notifications and runs the AI for every device.
+The Hub runs on the computer that stays on at home. One folder there holds everything: Work, design files, music, videos and everyone's saves. Every device signs in once (your picture at the top right, then **Hub**) and keeps in step with it by itself, at home or away (through Tailscale). The Hub also sends phone notifications and runs the AI for every device.
 
 **Set it up:** on that computer, download [hub/WorkbenchHub.zip](hub/WorkbenchHub.zip), unzip it and double-click **Install Workbench Hub**. The step-by-step guide is in [hub/README.md](hub/README.md). The Hub updates itself from this site.
 
