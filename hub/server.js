@@ -17,7 +17,7 @@ const http = require("http"),
   { readTags } = require("./tags.js"),
   { __wbReminders } = require("./reminders.js");
 
-const VERSION = "1.3.0";
+const VERSION = "1.4.0";
 const HOME = process.env.WB_HUB_HOME || path.join(__dirname, "..");
 const CONF = process.env.WB_HUB_CONFIG || path.join(HOME, "hub.json");
 const APP = "https://tonystarkofficial1111-web.github.io";
@@ -260,6 +260,9 @@ function login(b) {
   DV.devices.push(d);
   saveDevices();
   log("Signed in:", u.name, "on", d.name);
+  try {
+    pubEvent("device", u.name + " signed in", "on " + d.name);
+  } catch {}
   return { token, user: pub(u), device: { id: d.id, name: d.name } };
 }
 
@@ -726,6 +729,9 @@ async function checkUpdate() {
     for (const name of Object.keys(v.files)) fs.copyFileSync(path.join(tmp, name), path.join(__dirname, name));
     fs.rmSync(tmp, { recursive: !0, force: !0 });
     log("Updated to", v.version, "- restarting");
+    try {
+      pubEvent("update", "Hub updated to " + v.version, "");
+    } catch {}
     setTimeout(() => process.exit(3), 300);
   } catch (e) {
     Object.assign(UPD, { checked: Date.now(), err: e.message });
@@ -936,10 +942,22 @@ async function systemInfo(req) {
 const PUBDIR = () => path.join(C.root, "Public");
 let P = null;
 function pubLoad() {
-  if (!P) P = Object.assign({ companies: [], apps: [], msgs: [], artist: { name: "", bio: "", photo: "", socials: {} }, tracks: [], published: { at: 0, commit: "", files: {} }, radioEpoch: 0 }, readJson(hubf("public.json"), {}));
+  if (!P) {
+    P = Object.assign({ companies: [], apps: [], msgs: [], artist: { name: "", bio: "", photo: "", socials: {} }, tracks: [], published: { at: 0, commit: "", files: {} }, radioEpoch: 0, forms: null, responses: [], events: [], changedAt: 0 }, readJson(hubf("public.json"), {}));
+    // 1.4.0: ready-made forms, and 1.3.0's applications become answers to the company sign-up form
+    if (!Array.isArray(P.forms)) P.forms = formDefaults();
+    const cf = P.forms.find((f) => f.kind === "company");
+    if (cf && P.apps.length) {
+      for (const a of P.apps)
+        P.responses.push({ id: a.id, form: cf.id, slug: cf.slug, title: cf.title, kind: "company", at: a.at, files: a.logo ? { logo: a.logo } : {}, status: "new", items: cf.fields.map((q) => ({ id: q.id, label: q.label, type: q.type, map: q.map, value: q.map === "logo" ? a.logo || "" : q.map === "instagram" || q.map === "tiktok" || q.map === "facebook" ? (a.socials || {})[q.map] || "" : a[q.map] || "" })) });
+      P.apps = [];
+    }
+    writeJson(hubf("public.json"), P);
+  }
   return P;
 }
-const pubSave = () => writeJson(hubf("public.json"), P);
+// every change remembers when it happened, so the Rig tab can say "not published yet"
+const pubSave = () => ((P.changedAt = Date.now()), writeJson(hubf("public.json"), P));
 const clip = (v, n) => String(v ?? "").replace(/[\u0000-\u001f]/g, " ").trim().slice(0, n);
 const webUrl = (u) => (/^https?:\/\/[^\s<>"']+$/i.test(String(u || "").trim()) ? String(u).trim().slice(0, 300) : "");
 const SOCIALS = ["instagram", "tiktok", "facebook", "youtube", "x", "whatsapp", "soundcloud", "spotify"];
@@ -1013,7 +1031,9 @@ function pubFromB64(b64, mime) {
   return file;
 }
 // tell the owner's devices
-function pubNotify(title, body) {
+function pubNotify(title, body, kind, ref) {
+  pubEvent(kind || "note", title, body, ref);
+  trayNote(title, body);
   const owners = new Set(U.users.filter((u) => u.role === "owner").map((u) => u.id));
   for (const d of DV.devices) owners.has(d.user) && d.push && pushTo(d, { title, body, tag: "pub" });
   broadcast({ type: "pub" }, (c) => c.user.role === "owner");
@@ -1059,6 +1079,7 @@ function pubData() {
     v: 1,
     at: Date.now(),
     inbox: C.inbox && C.inboxUrl ? C.inboxUrl : "",
+    forms: (S.forms || []).filter((f) => f.open).map((f) => ({ slug: f.slug, title: f.title, desc: f.desc || "", kind: f.kind, fields: f.fields.map((q) => ({ id: q.id, type: q.type, label: q.label, help: q.help, req: q.req, opts: q.opts })) })),
     companies: live.map((c) => ({ id: c.id, slug: c.slug, name: c.name, category: c.category || "", description: c.description || "", city: c.city || "", address: c.address || "", phone: c.phone || "", email: c.email || "", website: c.website || "", socials: c.socials || {}, deal: c.deal || "", code: c.code || "", featured: !!c.featured, logo: m(c.logo) })),
     spotlight: tracks.length || S.artist.name ? { artist: { name: S.artist.name || "", bio: S.artist.bio || "", photo: m(S.artist.photo), socials: S.artist.socials || {} }, epoch: S.radioEpoch, tracks: tracks.map((t) => ({ id: t.id, title: t.title, dur: t.dur || 0, file: m(t.file), cover: m(t.cover), at: t.at })) } : null,
   };
@@ -1094,8 +1115,9 @@ async function publish() {
     const nt = await gh("/git/trees", { method: "POST", body: { base_tree: commit.tree.sha, tree } }),
       nc = await gh("/git/commits", { method: "POST", body: { message: "Workbench: publish Discover and Spotlight", tree: nt.sha, parents: [base] } });
     await gh("/git/refs/heads/" + cfg.branch, { method: "PATCH", body: { sha: nc.sha } });
-    S.published = { at: Date.now(), commit: nc.sha, files: sent, companies: data.companies.length, tracks: data.spotlight ? data.spotlight.tracks.length : 0 };
-    pubSave();
+    S.published = { at: Date.now(), commit: nc.sha, files: sent, companies: data.companies.length, tracks: data.spotlight ? data.spotlight.tracks.length : 0, forms: data.forms.length };
+    writeJson(hubf("public.json"), S);
+    pubEvent("publish", "Published to the website", data.companies.length + " companies, " + S.published.tracks + " songs, " + data.forms.length + " forms");
     log("Published", data.companies.length, "companies and", S.published.tracks, "tracks");
     return S.published;
   })().finally(() => (publishing = null)));
@@ -1143,20 +1165,36 @@ async function inboxRoute(req, res) {
   if (o) (res.setHeader("Access-Control-Allow-Origin", o), res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS"), res.setHeader("Access-Control-Allow-Headers", "Content-Type"));
   if (req.method === "OPTIONS") return (res.writeHead(204), res.end());
   if (url.pathname === "/ping") return json(res, 200, { ok: !0 });
-  if (req.method !== "POST" || (url.pathname !== "/apply" && url.pathname !== "/message")) return fail(res, 404, "Not here.");
+  if (req.method !== "POST" || !["/apply", "/message", "/form"].includes(url.pathname)) return fail(res, 404, "Not here.");
   const b = await jsonBody(req, 2.2e6),
     S = pubLoad();
   if (b.website2) return json(res, 200, { ok: !0 });
   inboxLimit(req);
-  if (url.pathname === "/apply") {
-    if (S.apps.length >= 300) return fail(res, 503, "Applications are full right now. Try again later.");
-    const a = companyFields({ id: id36(), at: Date.now(), name: clip(b.name, 80), note: clip(b.note, 1000), contact: clip(b.contact, 160) }, b);
-    if (!a.name || !a.contact) return fail(res, 400, "Your company's name and a way to reach you are needed.");
-    a.logo = pubFromB64(b.logo, b.logoType);
-    S.apps.push(a);
-    pubSave();
-    log("Application:", a.name);
-    pubNotify("New company application", a.name + (a.category ? " · " + a.category : ""));
+  if (url.pathname === "/form" || url.pathname === "/apply") {
+    if (S.responses.filter((r) => r.status === "new").length >= 1000) return fail(res, 503, "Too many answers are waiting right now. Try again later.");
+    let f, body = b;
+    if (url.pathname === "/form") f = S.forms.find((x) => x.slug === clip(b.form, 60) && x.open);
+    else {
+      // a 6.6 page's "List your company": the same answers, into the company sign-up form
+      f = S.forms.find((x) => x.kind === "company" && x.open);
+      const A = {},
+        Fl = {};
+      f &&
+        f.fields.forEach((q) => {
+          if (q.map === "logo") b.logo && (Fl[q.id] = { b64: b.logo, type: b.logoType });
+          else if (["instagram", "tiktok", "facebook"].includes(q.map)) A[q.id] = (b.socials || {})[q.map] || "";
+          else if (q.map) A[q.id] = b[q.map] || "";
+        });
+      body = { answers: A, files: Fl };
+    }
+    if (!f) return fail(res, 404, "That form isn't open.");
+    const r = formAnswer(f, body);
+    S.responses.unshift(r);
+    S.responses.length > 2000 && (S.responses.length = 2000);
+    writeJson(hubf("public.json"), S);
+    const who = (r.items.find((x) => x.map === "name") || r.items.find((x) => x.type === "short" && x.value) || {}).value || "Someone";
+    log("Form:", f.title, "·", who);
+    pubNotify(f.kind === "company" ? "New company sign-up" : f.kind === "artist" ? "New artist sign-up" : "New answer: " + f.title, String(who), "form", r.id);
     return json(res, 200, { ok: !0 });
   }
   if (S.msgs.length >= 1000) return fail(res, 503, "Messages are full right now. Try again later.");
@@ -1164,17 +1202,184 @@ async function inboxRoute(req, res) {
     m = { id: id36(), at: Date.now(), company: c ? c.slug : "", companyName: c ? c.name : "", name: clip(b.name, 80), contact: clip(b.contact, 160), text: clip(b.text, 2000) };
   if (!c || !m.text || !m.contact) return fail(res, 400, "Write a message and a way to reach you.");
   S.msgs.push(m);
-  pubSave();
+  writeJson(hubf("public.json"), S);
   log("Message for", c.name);
-  pubNotify("Message for " + c.name, (m.name ? m.name + ": " : "") + m.text.slice(0, 120));
+  pubNotify("Message for " + c.name, (m.name ? m.name + ": " : "") + m.text.slice(0, 120), "message", m.id);
   return json(res, 200, { ok: !0 });
 }
 // what the owner (everything) or the Spotlight artist (the artist and the tracks) gets
 function pubView(u) {
   const S = pubLoad();
   if (u.role === "owner")
-    return Object.assign({}, S, { publish: C.publish ? { repo: C.publish.repo, branch: C.publish.branch, key: !!ghTok() } : null, inbox: { on: !!C.inbox, url: C.inboxUrl || "" }, owner: !0 });
+    return Object.assign({}, S, { publish: C.publish ? { repo: C.publish.repo, branch: C.publish.branch, key: !!ghTok() } : null, inbox: { on: !!C.inbox, url: C.inboxUrl || "" }, owner: !0, dirty: (S.changedAt || 0) > ((S.published && S.published.at) || 0), events: (S.events || []).slice(0, 40), responses: (S.responses || []).slice(0, 300) });
   return { artist: S.artist, tracks: S.tracks, owner: !1 };
+}
+
+// ---- forms: Workbench's own Google Forms (1.4.0) ----------------------------------------------------
+// The owner builds forms on the rig (short answer, paragraph, choices, checkboxes, dropdown, email,
+// phone, date, number, link, picture). Open forms are published with Discover; people fill them in
+// on the website, the answers come through the inbox, and the owner reads them on the Rig tab's
+// front page. A company sign-up that's approved becomes its Discover page by itself.
+const FTYPES = ["short", "long", "choice", "checks", "select", "email", "phone", "date", "number", "link", "image"];
+const FMAPS = ["name", "category", "city", "address", "phone", "email", "website", "instagram", "tiktok", "facebook", "youtube", "whatsapp", "description", "deal", "code", "logo", "contact"];
+const fld = (type, label, req, map, help, opts) => ({ id: id36().slice(-8) + Math.floor(Math.random() * 1e4), type, label, req: !!req, map: map || "", help: help || "", opts: opts || [] });
+function formDefaults() {
+  return [
+    {
+      id: id36(),
+      slug: "company-sign-up",
+      kind: "company",
+      title: "List your company",
+      desc: "Tell us about your business. Once it's approved it shows up in Discover, with its own link to send people.",
+      open: !0,
+      fields: [
+        fld("short", "Company name", 1, "name"),
+        fld("short", "What you do", 0, "category", "Food, signs, auto, beauty…"),
+        fld("short", "City", 0, "city"),
+        fld("short", "Address", 0, "address"),
+        fld("phone", "Phone", 0, "phone"),
+        fld("email", "Email", 0, "email"),
+        fld("link", "Website", 0, "website"),
+        fld("link", "Instagram", 0, "instagram"),
+        fld("link", "TikTok", 0, "tiktok"),
+        fld("link", "Facebook", 0, "facebook"),
+        fld("long", "About your company", 0, "description"),
+        fld("short", "A deal for people from Workbench (optional)", 0, "deal", "10% off your first order"),
+        fld("image", "Logo", 0, "logo"),
+        fld("short", "How we reach you (not shown)", 1, "contact", "Phone or email"),
+      ],
+    },
+    { id: id36(), slug: "contact", kind: "contact", title: "Contact Workbench", desc: "Write to us. We'll get back to you.", open: !0, fields: [fld("short", "Your name"), fld("short", "How to reach you", 1, "", "Phone or email"), fld("long", "Message", 1)] },
+    {
+      id: id36(),
+      slug: "artist-sign-up",
+      kind: "artist",
+      title: "Be on Spotlight",
+      desc: "Make music? Tell us about it, and where we can hear it.",
+      open: !0,
+      fields: [fld("short", "Artist name", 1), fld("short", "How to reach you", 1, "", "Phone or email"), fld("link", "Where we can hear you", 0, "", "SoundCloud, YouTube, Instagram…"), fld("long", "About you"), fld("image", "A photo")],
+    },
+  ];
+}
+function formSlug(title, id) {
+  let s = slugOf(title).slice(0, 36) || "form",
+    n = 2,
+    t = s;
+  while (pubLoad().forms.some((f) => f.slug === t && f.id !== id)) t = s + "-" + n++;
+  return t;
+}
+function formSave(b) {
+  const S = pubLoad(),
+    old = b.id && S.forms.find((f) => f.id === b.id),
+    f = old || { id: id36(), at: Date.now(), open: !0, kind: "custom" },
+    title = clip(b.title, 120) || f.title;
+  if (!title) throw Object.assign(new Error("A form needs a title."), { code: 400 });
+  if (!old || (b.slug && b.slug !== f.slug)) f.slug = formSlug(b.slug || title, f.id);
+  f.title = title;
+  "desc" in b && (f.desc = clip(b.desc, 1000));
+  "open" in b && (f.open = !!b.open);
+  "kind" in b && (f.kind = ["company", "contact", "artist", "custom"].includes(b.kind) ? b.kind : "custom");
+  if ("fields" in b) {
+    const F = [].concat(b.fields || []).slice(0, 40);
+    f.fields = F.map((x) => ({
+      id: /^[\w-]{4,24}$/.test(String(x.id || "")) ? String(x.id) : id36().slice(-8) + Math.floor(Math.random() * 1e4),
+      type: FTYPES.includes(x.type) ? x.type : "short",
+      label: clip(x.label, 200) || "Question",
+      help: clip(x.help, 200),
+      req: !!x.req,
+      map: f.kind === "company" && FMAPS.includes(x.map) ? x.map : "",
+      opts: ["choice", "checks", "select"].includes(x.type) ? [...new Set([].concat(x.opts || []).map((o) => clip(o, 100)).filter(Boolean))].slice(0, 30) : [],
+    }));
+    if (!f.fields.length) throw Object.assign(new Error("Add at least one question."), { code: 400 });
+  }
+  f.u = Date.now();
+  old || S.forms.push(f);
+  pubSave();
+  return f;
+}
+// one person's answers, checked against the form
+function formAnswer(f, b) {
+  const A = (b && b.answers) || {},
+    Fl = (b && b.files) || {},
+    items = [],
+    files = {};
+  for (const q of f.fields) {
+    let v = A[q.id],
+      bad = (m) => Object.assign(new Error((q.label || "A question") + ": " + m), { code: 400 });
+    if (q.type === "image") {
+      const x = Fl[q.id];
+      if (x && x.b64) {
+        const file = pubFromB64(x.b64, x.type);
+        if (!file) throw bad("send a PNG, JPG or WEBP picture up to 1.5 MB.");
+        files[q.id] = file;
+        v = file;
+      } else v = "";
+    } else if (q.type === "checks") v = [].concat(v || []).map((o) => clip(o, 100)).filter((o) => q.opts.includes(o));
+    else {
+      v = clip(v, q.type === "long" ? 5000 : 300);
+      if (v) {
+        if (q.type === "email" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) throw bad("that email doesn't look right.");
+        if (q.type === "phone" && !/^[+\d(][\d\s().+-]{4,30}$/.test(v)) throw bad("that phone number doesn't look right.");
+        if (q.type === "date" && !/^\d{4}-\d{2}-\d{2}$/.test(v)) throw bad("pick a date.");
+        if (q.type === "number" && !isFinite(+v)) throw bad("write a number.");
+        if (q.type === "link") v = webUrl(/^https?:\/\//i.test(v) ? v : "https://" + v) || "";
+        if ((q.type === "choice" || q.type === "select") && !q.opts.includes(v)) throw bad("pick one of the choices.");
+      }
+    }
+    if (q.req && (!v || (Array.isArray(v) && !v.length))) throw bad("this one is needed.");
+    items.push({ id: q.id, label: q.label, type: q.type, map: q.map || "", value: v });
+  }
+  return { id: id36(), form: f.id, slug: f.slug, title: f.title, kind: f.kind, at: Date.now(), items, files, status: "new" };
+}
+// an approved company sign-up becomes its Discover page
+function responseToCompany(r) {
+  const m = {};
+  for (const it of r.items) it.map && it.value && (m[it.map] = it.value);
+  const c = companySave({ name: m.name || r.items.find((x) => x.type === "short" && x.value)?.value || "New company", category: m.category, city: m.city, address: m.address, phone: m.phone, email: m.email, website: m.website, description: m.description, deal: m.deal, code: m.code, socials: { instagram: m.instagram, tiktok: m.tiktok, facebook: m.facebook, youtube: m.youtube, whatsapp: m.whatsapp } });
+  m.logo && (c.logo = m.logo);
+  c.contact = m.contact || "";
+  c.from = "form";
+  pubSave();
+  return c;
+}
+// ---- the owner's feed of what happened, and the rig's own pop-ups
+const trayQ = [];
+let trayN = 0;
+function pubEvent(kind, title, body, ref) {
+  const S = pubLoad(),
+    top = S.events[0];
+  // the same thing again within the hour just moves to the top (a phone signing in twice, say)
+  if (top && top.kind === kind && top.title === clip(title, 120) && Date.now() - top.at < 3600000 && kind !== "form" && kind !== "message") S.events.shift();
+  S.events.unshift({ id: id36(), at: Date.now(), kind, title: clip(title, 120), body: clip(body, 300), ref: ref || "" });
+  S.events.length > 300 && (S.events.length = 300);
+  writeJson(hubf("public.json"), S);
+}
+function trayNote(title, body) {
+  trayQ.push({ n: ++trayN, title: clip(title, 60), body: clip(body, 200) });
+  trayQ.length > 50 && trayQ.shift();
+}
+// ---- a week of the rig's numbers, every 10 minutes, for the little graphs
+let HIS = null;
+async function histSample() {
+  HIS = HIS || readJson(hubf("history.json"), { points: [] });
+  try {
+    const [cpu, gpu] = await Promise.all([cpuBusy(), gpuInfo()]),
+      disks = diskList(),
+      hd = disks.find((d) => d.hub) || disks[0],
+      g = gpu && gpu[0];
+    let visits = null;
+    if (C.countCode)
+      try {
+        const r = await fetch("https://" + C.countCode + ".goatcounter.com/counter/TOTAL.json", { signal: AbortSignal.timeout(8000) });
+        r.ok && (visits = parseInt(String((await r.json()).count || "").replace(/[^\d]/g, ""), 10) || 0);
+      } catch {}
+    HIS.points.push({ t: Date.now(), cpu, ram: Math.round(1000 * (1 - os.freemem() / os.totalmem())) / 10, gpu: g ? g.busy : null, temp: g ? g.temp : null, free: hd ? hd.free : null, online: new Set([...live].map((c) => c.device.id)).size, visits });
+    const cut = Date.now() - 7 * 864e5 - 9e5;
+    HIS.points = HIS.points.filter((p) => p.t >= cut).slice(-1100);
+    writeJson(hubf("history.json"), HIS);
+  } catch (e) {
+    log("History:", e.message);
+  }
 }
 
 // ---- the routes ---------------------------------------------------------------------------------
@@ -1185,6 +1390,12 @@ async function route(req, res) {
   cors(req, res);
   if (M === "OPTIONS") return (res.writeHead(204), res.end());
   if (p === "/" || p === "/index.html") return statusPage(req, res);
+  if (p === "/api/tray") {
+    if (!fromRig(req) || req.headers["x-forwarded-for"] || req.headers["x-forwarded-host"] || req.headers.origin) return fail(res, 403, "Only for the Hub's icon on the rig.");
+    // the first ask (no "after") only learns where the list is, so old notices don't pop up again
+    const after = url.searchParams.get("after");
+    return json(res, 200, { last: trayN, notes: after == null ? [] : trayQ.filter((n) => n.n > +after) });
+  }
   if (p === "/api/ping") return json(res, 200, { ok: !0, hub: "Workbench Hub", version: VERSION, name: C.name, setup: U.users.length > 0, time: Date.now() });
   if (p === "/api/login" && M === "POST") return json(res, 200, login(await jsonBody(req, 1e4)));
   const a = auth(req, url);
@@ -1205,8 +1416,16 @@ async function route(req, res) {
       } catch {}
       return json(res, 200, { user: pub(u), device: { id: a.device.id, name: a.device.name, push: !!a.device.push }, hub: { name: C.name, version: VERSION, disk: owner ? disk : null, rig: fromRig(req) } });
     }
+    case "/api/system/history":
+      if (!owner) return fail(res, 403, "Only the owner can see the rig's health.");
+      HIS = HIS || readJson(hubf("history.json"), { points: [] });
+      return json(res, 200, { points: HIS.points, every: 600 });
     case "/api/system": {
       if (!owner) return fail(res, 403, "Only the owner can see the rig's health.");
+      {
+        const cc = String(url.searchParams.get("count") || "");
+        /^[a-z0-9-]{2,40}$/.test(cc) && cc !== C.countCode && ((C.countCode = cc), writeJson(CONF, C));
+      }
       return json(res, 200, await systemInfo(req));
     }
     case "/api/system/ai": {
@@ -1258,7 +1477,7 @@ async function route(req, res) {
       else if (kind === "cover") t.cover = file;
       else S.tracks.push({ id: id36(), title: clip(url.searchParams.get("title") || path.parse(String(url.searchParams.get("name") || "Track")).name, 100), file, dur: Math.max(0, Math.min(3600, +url.searchParams.get("dur") || 0)), status: owner ? "approved" : "pending", by: u.id, byName: u.name, at: Date.now() });
       pubSave();
-      kind === "song" && !owner && pubNotify("A Spotlight track to approve", u.name + " added a song.");
+      kind === "song" && !owner && pubNotify("A Spotlight song to approve", u.name + " added a song.", "track");
       return json(res, 200, pubView(u));
     }
     case "/api/pub/track": {
@@ -1306,8 +1525,42 @@ async function route(req, res) {
       const b = await jsonBody(req, 1e4),
         S = pubLoad();
       S.msgs = S.msgs.filter((x) => x.id !== b.id);
-      pubSave();
+      writeJson(hubf("public.json"), S);
       return json(res, 200, pubView(u));
+    }
+    case "/api/pub/form": {
+      if (!owner) return fail(res, 403, "Only the owner makes forms.");
+      if (M === "DELETE") {
+        const S = pubLoad();
+        S.forms = S.forms.filter((f) => f.id !== url.searchParams.get("id"));
+        pubSave();
+        return json(res, 200, pubView(u));
+      }
+      if (M === "POST") return (formSave(await jsonBody(req, 2e5)), json(res, 200, pubView(u)));
+      break;
+    }
+    case "/api/pub/resp": {
+      if (!owner) return fail(res, 403, "Only the owner.");
+      const S = pubLoad();
+      if (M === "DELETE") {
+        S.responses = S.responses.filter((r) => r.id !== url.searchParams.get("id"));
+        writeJson(hubf("public.json"), S);
+        return json(res, 200, pubView(u));
+      }
+      const b = await jsonBody(req, 1e4),
+        r = S.responses.find((x) => x.id === b.id);
+      if (!r) return fail(res, 404, "No such answer.");
+      let made = null;
+      if (b.do === "approve") {
+        r.kind === "company" && (made = responseToCompany(r));
+        r.status = "approved";
+        pubEvent("company", made ? made.name + " is in Discover" : "Approved: " + r.title, made ? "Publish to put it on the website." : "", r.id);
+      } else if (b.do === "decline") r.status = "declined";
+      else if (b.do === "done") r.status = "done";
+      else if (b.do === "new") r.status = "new";
+      r.decided = Date.now();
+      writeJson(hubf("public.json"), S);
+      return json(res, 200, Object.assign(pubView(u), { made: made ? made.id : "" }));
     }
     case "/api/pub/setup":
       if (!owner) return fail(res, 403, "Only the owner.");
@@ -1644,6 +1897,8 @@ function main() {
   setInterval(() => makeDigest().catch((e) => log("digest:", e.message)), 60 * 60000);
   setTimeout(() => makeDigest().catch(() => {}), 120000);
   setTimeout(checkUpdate, 5 * 60000);
+  setTimeout(histSample, 45000);
+  setInterval(histSample, 10 * 60000);
   setInterval(checkUpdate, 6 * 3600000);
 }
 if (require.main === module) main();

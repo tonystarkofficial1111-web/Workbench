@@ -89,7 +89,8 @@ $menu.Items.Add("Copy the Hub address").add_Click({
     $a = Get-Address
     if ($a) {
       [System.Windows.Forms.Clipboard]::SetText($a)
-      $icon.ShowBalloonTip(4000, "Workbench Hub", "Copied: " + $a + "  Paste it on your other devices (bell - Hub).", [System.Windows.Forms.ToolTipIcon]::Info)
+      $script:NoteOpen = $false
+      $icon.ShowBalloonTip(4000, "Workbench Hub", "Copied: " + $a + "  Paste it on your other devices (your picture, top right - Hub).", [System.Windows.Forms.ToolTipIcon]::Info)
     } else {
       $icon.ShowBalloonTip(5000, "Workbench Hub", "Tailscale isn't set up on this computer yet. Install it from tailscale.com and sign in, then run the Hub installer again.", [System.Windows.Forms.ToolTipIcon]::Warning)
     }
@@ -104,6 +105,38 @@ $menu.Items.Add("Quit the Hub").add_Click({
     [System.Windows.Forms.Application]::Exit()
   })
 $icon.ContextMenuStrip = $menu
+
+# Pop-ups for what needs you (a company signed up, a form was answered, a message came in):
+# the Hub keeps a short list, and the icon shows each new one as a Windows notification.
+$script:TrayN = -1
+$script:NoteOpen = $false
+function Get-Notes {
+  try {
+    $q = ""
+    if ($script:TrayN -ge 0) { $q = "?after=" + $script:TrayN }
+    $req = [System.Net.HttpWebRequest]::Create("http://127.0.0.1:$Port/api/tray" + $q)
+    $req.Timeout = 1500
+    $res = $req.GetResponse()
+    $rd = New-Object System.IO.StreamReader($res.GetResponseStream())
+    $j = $rd.ReadToEnd() | ConvertFrom-Json
+    $rd.Close()
+    $res.Close()
+    $last = [int]$j.last
+    if ($script:TrayN -ge 0 -and $last -lt $script:TrayN) { $script:TrayN = 0; return }
+    foreach ($n in @($j.notes)) {
+      if ($n) {
+        $script:NoteOpen = $true
+        $icon.ShowBalloonTip(8000, [string]$n.title, [string]$n.body, [System.Windows.Forms.ToolTipIcon]::Info)
+      }
+    }
+    $script:TrayN = $last
+  } catch {}
+}
+$icon.add_BalloonTipClicked({
+    if ($script:NoteOpen) { Start-Process ($AppUrl + "?tab=tab-rig") }
+    $script:NoteOpen = $false
+  })
+$icon.add_BalloonTipClosed({ $script:NoteOpen = $false })
 $icon.add_DoubleClick({ Start-Process "http://127.0.0.1:$Port/" })
 
 Start-Hub
@@ -138,6 +171,7 @@ $timer.add_Tick({
       }
     }
     if (-not $script:Proc -and (Get-Date) -ge $script:WaitUntil) { Start-Hub }
+    if ($script:tick % 3 -eq 2 -and $script:Status -eq "Online") { Get-Notes }
     if ($script:tick % 5 -eq 1) {
       if (Ping-Hub) { $script:Status = "Online"; $script:Fails = 0 }
       elseif ($script:Proc) { $script:Status = "Starting" }
