@@ -17,7 +17,7 @@ const http = require("http"),
   { readTags } = require("./tags.js"),
   { __wbReminders } = require("./reminders.js");
 
-const VERSION = "1.5.0";
+const VERSION = "1.5.1";
 const HOME = process.env.WB_HUB_HOME || path.join(__dirname, "..");
 const CONF = process.env.WB_HUB_CONFIG || path.join(HOME, "hub.json");
 const APP = "https://tonystarkofficial1111-web.github.io";
@@ -1117,16 +1117,38 @@ async function gh(p, o) {
   try {
     j = JSON.parse(t);
   } catch {}
-  if (!r.ok) throw Object.assign(new Error("GitHub said " + r.status + ": " + ((j && j.message) || t).slice(0, 160)), { code: 502 });
+  if (!r.ok) throw Object.assign(new Error("GitHub said " + r.status + ": " + ((j && j.message) || t).slice(0, 160)), { code: 502, status: r.status, ghMsg: String((j && j.message) || "") });
   return j;
+}
+// what GitHub's "no" means, in plain words (null when it isn't about the key)
+function ghPlain(e, repo) {
+  const st = e && e.status,
+    m = String((e && e.ghMsg) || ""),
+    fix = "On github.com: your picture → Settings → Developer settings → Personal access tokens → Fine-grained tokens → the Workbench rig key → Edit. Under Repository access pick Only select repositories → " + (String(repo || "").split("/")[1] || "workbench") + ", and under Repository permissions set Contents to Read and write → Update. Then press Post again (the same key keeps working).";
+  if (st === 401) return "GitHub says the key is wrong or has expired. Make a new key (Fine-grained tokens → Generate new token) and paste it here.";
+  if (st === 403 && /rate limit/i.test(m)) return "";
+  if (st === 403 || (st === 404 && /not found/i.test(m))) return "The key can look at the website's repository but can't change it. " + fix;
+  return "";
 }
 async function pubSetup(b) {
   const repo = clip(b.repo, 120).replace(/^https?:\/\/github\.com\//i, "").replace(/\.git$|\/+$/g, ""),
     token = clip(b.token, 300);
   if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) throw Object.assign(new Error("The repository looks like owner/name, for example you/workbench."), { code: 400 });
   if (!token) throw Object.assign(new Error("Paste the GitHub key (token)."), { code: 400 });
-  const info = await gh("/repos/" + repo, { token });
+  let info;
+  try {
+    info = await gh("/repos/" + repo, { token });
+  } catch (e) {
+    throw Object.assign(new Error(e.status === 404 ? "GitHub can't find " + repo + " with this key. Check the name, and that the key's Repository access includes it." : ghPlain(e, repo) || e.message), { code: 400 });
+  }
   if (!info.permissions || !info.permissions.push) throw Object.assign(new Error("That key can't write to " + repo + ". Give it Contents: Read and write."), { code: 400 });
+  // (that answer is about the account, not the key: make sure the key itself can write, with a
+  // tiny file GitHub keeps nowhere visible)
+  try {
+    await gh("/repos/" + repo + "/git/blobs", { method: "POST", token, body: { content: Buffer.from("Workbench can publish here.\n").toString("base64"), encoding: "base64" } });
+  } catch (e) {
+    throw Object.assign(new Error(ghPlain(e, repo) || e.message), { code: 400 });
+  }
   writeJson(hubf("github.json"), { token });
   C.publish = { repo, branch: clip(b.branch, 60) || info.default_branch || "main", dir: "public" };
   writeJson(CONF, C);
@@ -1151,7 +1173,20 @@ function pubData() {
 let publishing = null;
 async function publish() {
   if (publishing) return publishing;
-  return (publishing = (async () => {
+  return (publishing = publishRun()
+    .then((r) => (C.publish && C.publish.keyErr && (delete C.publish.keyErr, writeJson(CONF, C)), r))
+    .catch((e) => {
+      // a key that can't change the repository: say how to fix it, and keep it on the Forms page
+      const plain = ghPlain(e, C.publish && C.publish.repo);
+      if (!plain) throw e;
+      C.publish && ((C.publish.keyErr = plain), writeJson(CONF, C));
+      log("Publish refused by GitHub:", e.message);
+      throw Object.assign(new Error(plain), { code: 400 });
+    })
+    .finally(() => (publishing = null)));
+}
+function publishRun() {
+  return (async () => {
     const cfg = C.publish;
     if (!cfg || !cfg.repo || !ghTok()) throw Object.assign(new Error("Set up publishing first (the GitHub key)."), { code: 400 });
     const S = pubLoad(),
@@ -1184,7 +1219,7 @@ async function publish() {
     pubEvent("publish", "Published to the website", data.companies.length + " companies, " + S.published.tracks + " songs, " + data.forms.length + " forms");
     log("Published", data.companies.length, "companies and", S.published.tracks, "tracks");
     return S.published;
-  })().finally(() => (publishing = null)));
+  })();
 }
 // ---- the public inbox (Tailscale Funnel → 127.0.0.1:8771)
 function runAll(cmds, args, ms) {
@@ -1329,7 +1364,7 @@ function pubView(u) {
   const S = pubLoad();
   if (u.role === "owner")
     return Object.assign({}, S, {
-      pairs: DV.devices.filter((d) => d.user === u.id && d.pairReq && !d.remote).map((d) => ({ id: d.id, name: d.name, at: d.pairReq })), publish: C.publish ? { repo: C.publish.repo, branch: C.publish.branch, key: !!ghTok() } : null, inbox: { on: !!C.inbox, url: C.inboxUrl || "" }, owner: !0, dirty: (S.changedAt || 0) > ((S.published && S.published.at) || 0), events: (S.events || []).slice(0, 40), responses: (S.responses || []).slice(0, 300) });
+      pairs: DV.devices.filter((d) => d.user === u.id && d.pairReq && !d.remote).map((d) => ({ id: d.id, name: d.name, at: d.pairReq })), publish: C.publish ? { repo: C.publish.repo, branch: C.publish.branch, key: !!ghTok(), keyErr: C.publish.keyErr || "" } : null, inbox: { on: !!C.inbox, url: C.inboxUrl || "" }, owner: !0, dirty: (S.changedAt || 0) > ((S.published && S.published.at) || 0), events: (S.events || []).slice(0, 40), responses: (S.responses || []).slice(0, 300) });
   return { artist: S.artist, tracks: S.tracks, owner: !1 };
 }
 
