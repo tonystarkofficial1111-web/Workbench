@@ -160,6 +160,10 @@ $timer.add_Tick({
         }
         Start-Hub
         $icon.ShowBalloonTip(3000, "Workbench Hub", "Updated to a new version.", [System.Windows.Forms.ToolTipIcon]::Info)
+      } elseif ($code -eq 4) {
+        # restarted on purpose (Restart the Hub, from the rig or a Rig Remote)
+        Start-Hub
+        $icon.ShowBalloonTip(3000, "Workbench Hub", "The Hub restarted.", [System.Windows.Forms.ToolTipIcon]::Info)
       } elseif ($code -eq 2) {
         $script:Status = "Another program uses port $Port"
         $script:WaitUntil = (Get-Date).AddSeconds(60)

@@ -64,13 +64,32 @@ self.addEventListener("push", (e) => {
       const wins = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
       const seen = wins.find((c) => c.visibilityState === "visible");
       if (seen) return seen.postMessage({ type: "wb-push", msg: m });
-      await self.registration.showNotification(m.title || "Workbench", { body: m.body || "", tag: m.tag || "wb", data: { open: m.open || "" }, icon: "icons/icon-192.png", badge: "icons/favicon-32.png" });
+      // a Rig Remote's notifications can carry buttons (Approve, Done…) that answer the rig directly
+      const o = { body: m.body || "", tag: m.tag || "wb", data: { open: m.open || "", act: m.act || null }, icon: "icons/icon-192.png", badge: "icons/favicon-32.png" };
+      Array.isArray(m.actions) && m.actions.length && m.act && (o.actions = m.actions.slice(0, 2));
+      await self.registration.showNotification(m.title || "Workbench", o);
     })(),
   );
 });
 self.addEventListener("notificationclick", (e) => {
   e.notification.close();
-  const open = (e.notification.data && e.notification.data.open) || "";
+  const open = (e.notification.data && e.notification.data.open) || "",
+    act = e.notification.data && e.notification.data.act;
+  // a button: tell the rig, then say how it went (Workbench doesn't need to open)
+  if (e.action && act && act.k && /^https?:\/\//.test(act.url || ""))
+    return e.waitUntil(
+      (async () => {
+        let text = "";
+        try {
+          const r = await fetch(act.url.replace(/\/+$/, "") + "/api/act", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ k: act.k, do: e.action }) }),
+            j = await r.json().catch(() => ({}));
+          text = r.ok ? j.text || "Done." : j.error || "The rig didn't take it. Open Workbench to decide.";
+        } catch {
+          text = "Couldn't reach the rig. Open Workbench to decide.";
+        }
+        await self.registration.showNotification("Workbench", { body: text, tag: (e.notification.tag || "wb") + "-done", data: { open }, icon: "icons/icon-192.png", badge: "icons/favicon-32.png" });
+      })(),
+    );
   e.waitUntil(
     (async () => {
       const wins = await self.clients.matchAll({ type: "window", includeUncontrolled: true });

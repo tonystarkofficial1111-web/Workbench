@@ -17,7 +17,7 @@ const http = require("http"),
   { readTags } = require("./tags.js"),
   { __wbReminders } = require("./reminders.js");
 
-const VERSION = "1.4.0";
+const VERSION = "1.5.0";
 const HOME = process.env.WB_HUB_HOME || path.join(__dirname, "..");
 const CONF = process.env.WB_HUB_CONFIG || path.join(HOME, "hub.json");
 const APP = "https://tonystarkofficial1111-web.github.io";
@@ -852,6 +852,8 @@ function localAddrs() {
   return s;
 }
 function fromRig(req) {
+  // through the "use from anywhere" door it's never the rig, whatever the addresses say
+  if (req.wbRemote) return !1;
   const L = localAddrs(),
     ra = String(req.socket.remoteAddress || "").replace(/^::ffff:/, "");
   if (!L.has(ra)) return !1;
@@ -862,6 +864,12 @@ function fromRig(req) {
   if (!xf.length) return !(req.headers["x-forwarded-host"] || req.headers["tailscale-user-login"]);
   return xf.every((ip) => L.has(ip));
 }
+// the owner on the rig itself, or on a phone the owner paired as a Rig Remote (1.5.0)
+const rigCtl = (req, a) => a.user.role === "owner" && (fromRig(req) || !!(a.device && a.device.remote));
+// the rig itself only (folders, people, keys, publishing setup): never a phone, never the anywhere door
+const rigAdmin = (req, a) => a.user.role === "owner" && fromRig(req);
+const ctlNo = (res) => fail(res, 403, "Only on the rig, or on a phone you paired as a Rig Remote.");
+const adminNo = (res) => fail(res, 403, "Only on the rig itself.");
 function diskList() {
   const root = path.resolve(C.root).toLowerCase(),
     out = [];
@@ -952,6 +960,17 @@ function pubLoad() {
         P.responses.push({ id: a.id, form: cf.id, slug: cf.slug, title: cf.title, kind: "company", at: a.at, files: a.logo ? { logo: a.logo } : {}, status: "new", items: cf.fields.map((q) => ({ id: q.id, label: q.label, type: q.type, map: q.map, value: q.map === "logo" ? a.logo || "" : q.map === "instagram" || q.map === "tiktok" || q.map === "facebook" ? (a.socials || {})[q.map] || "" : a[q.map] || "" })) });
       P.apps = [];
     }
+    // 1.5.0: a form is on the website only after Post. Forms that went up with an earlier publish
+    // count as posted; if nothing was ever published, none are.
+    if (!P.postModel) {
+      P.postModel = 1;
+      const pb = P.published || (P.published = { at: 0, commit: "", files: {} }),
+        before = !!(pb.at && pb.forms > 0);
+      pb.formU = pb.formU || {};
+      for (const f of P.forms)
+        if (before && f.open && (f.u || 0) <= pb.at) pb.formU[f.id] = f.u || f.at || 1;
+        else if (!before) f.open = !1;
+    }
     writeJson(hubf("public.json"), P);
   }
   return P;
@@ -1031,12 +1050,57 @@ function pubFromB64(b64, mime) {
   return file;
 }
 // tell the owner's devices
-function pubNotify(title, body, kind, ref) {
+function pubNotify(title, body, kind, ref, acts) {
   pubEvent(kind || "note", title, body, ref);
   trayNote(title, body);
-  const owners = new Set(U.users.filter((u) => u.role === "owner").map((u) => u.id));
-  for (const d of DV.devices) owners.has(d.user) && d.push && pushTo(d, { title, body, tag: "pub" });
+  const owners = new Set(U.users.filter((u) => u.role === "owner").map((u) => u.id)),
+    open = ref && (kind === "form" || kind === "message" || kind === "remote") ? "rig:" + (kind === "form" ? "resp" : kind === "message" ? "msg" : "remote") + ":" + ref : "rig";
+  for (const d of DV.devices) {
+    if (!owners.has(d.user) || !d.push) continue;
+    const m = { title, body, tag: "pub-" + (ref || "x"), open };
+    // a paired Rig Remote gets buttons (Approve, Done…) that work without opening Workbench
+    if (d.remote && acts && acts.length && d.via) {
+      const k = crypto.randomBytes(18).toString("base64url");
+      ACTS.set(k, { dev: d.id, kind, ref, acts: acts.map((x) => x[0]), exp: Date.now() + 3 * 864e5 });
+      m.actions = acts.slice(0, 2).map(([action, t]) => ({ action, title: t }));
+      m.act = { k, url: d.via };
+    }
+    pushTo(d, m);
+  }
   broadcast({ type: "pub" }, (c) => c.user.role === "owner");
+}
+// one-time keys behind the buttons on a Rig Remote's notifications
+const ACTS = new Map();
+setInterval(() => {
+  for (const [k, v] of ACTS) v.exp < Date.now() && ACTS.delete(k);
+}, 3600000).unref();
+function actDo(b) {
+  const A = ACTS.get(String(b.k || "")),
+    d = A && DV.devices.find((x) => x.id === A.dev);
+  if (!A || A.exp < Date.now() || !d || !d.remote) throw Object.assign(new Error("That button has expired. Open Workbench to decide."), { code: 410 });
+  const what = String(b.do || "");
+  if (!A.acts.includes(what)) throw Object.assign(new Error("Not that one."), { code: 400 });
+  ACTS.delete(String(b.k));
+  const S = pubLoad();
+  if (A.kind === "form") {
+    const r = S.responses.find((x) => x.id === A.ref);
+    if (!r) throw Object.assign(new Error("That answer is gone."), { code: 404 });
+    let made = null;
+    if (what === "approve") (r.kind === "company" && (made = responseToCompany(r)), (r.status = "approved"), pubEvent("company", made ? made.name + " is in Discover" : "Approved: " + r.title, made ? "Publish to put it on the website." : "", r.id));
+    else r.status = what === "decline" ? "declined" : "done";
+    r.decided = Date.now();
+    writeJson(hubf("public.json"), S);
+    broadcast({ type: "pub" }, (c) => c.user.role === "owner");
+    log("Decided from a notification:", what, r.title);
+    return { ok: !0, text: what === "approve" ? (made ? made.name + " is in Discover. Publish to put it on the website." : "Approved.") : what === "decline" ? "Turned down." : "Done." };
+  }
+  if (A.kind === "message") {
+    S.msgs = S.msgs.filter((x) => x.id !== A.ref);
+    writeJson(hubf("public.json"), S);
+    broadcast({ type: "pub" }, (c) => c.user.role === "owner");
+    return { ok: !0, text: "Marked as passed on." };
+  }
+  throw Object.assign(new Error("Not that one."), { code: 400 });
 }
 // ---- publishing to the website through GitHub
 const ghTok = () => readJson(hubf("github.json"), {}).token || "";
@@ -1115,7 +1179,7 @@ async function publish() {
     const nt = await gh("/git/trees", { method: "POST", body: { base_tree: commit.tree.sha, tree } }),
       nc = await gh("/git/commits", { method: "POST", body: { message: "Workbench: publish Discover and Spotlight", tree: nt.sha, parents: [base] } });
     await gh("/git/refs/heads/" + cfg.branch, { method: "PATCH", body: { sha: nc.sha } });
-    S.published = { at: Date.now(), commit: nc.sha, files: sent, companies: data.companies.length, tracks: data.spotlight ? data.spotlight.tracks.length : 0, forms: data.forms.length };
+    S.published = { at: Date.now(), commit: nc.sha, files: sent, companies: data.companies.length, tracks: data.spotlight ? data.spotlight.tracks.length : 0, forms: data.forms.length, formU: Object.fromEntries((S.forms || []).filter((f) => f.open).map((f) => [f.id, f.u || f.at || 1])) };
     writeJson(hubf("public.json"), S);
     pubEvent("publish", "Published to the website", data.companies.length + " companies, " + S.published.tracks + " songs, " + data.forms.length + " forms");
     log("Published", data.companies.length, "companies and", S.published.tracks, "tracks");
@@ -1158,9 +1222,62 @@ function inboxLimit(req) {
   a.push(now);
   inboxHits.set(ip, a);
 }
+// ---- "use from anywhere" (1.5.0): the same Funnel address, plus a key made on the rig, in the path:
+// https://rig.<tailnet>.ts.net:8443/k/<key>. The key alone lets a device chat with the AI (no
+// Tailscale needed); a key that allows it also lets the device sign in with a name and PIN and use
+// the Hub as usual. Without a valid key the door says nothing. It's never "the rig": the rig's own
+// settings (folders, people, keys, publishing setup) stay on the rig.
+let RMK = null;
+const remLoad = () => (RMK = RMK || readJson(hubf("remote.json"), { keys: [] }));
+const remBad = new Map(),
+  remHits = new Map();
+const safeEq = (a, b) => {
+  const x = Buffer.from(String(a)),
+    y = Buffer.from(String(b));
+  return x.length === y.length && crypto.timingSafeEqual(x, y);
+};
+function remoteView() {
+  const R = remLoad(),
+    base = C.inbox && C.inboxUrl ? C.inboxUrl : "",
+    owners = new Set(U.users.filter((x) => x.role === "owner").map((x) => x.id));
+  return {
+    anywhere: { on: !!base, base, keys: R.keys.map((k) => ({ id: k.id, name: k.name, at: k.at, used: k.used || 0, full: !!k.full, url: base ? base + "/k/" + k.key : "" })) },
+    remotes: DV.devices.filter((d) => owners.has(d.user) && (d.remote || d.pairReq)).map((d) => ({ id: d.id, name: d.name, seen: d.seen || 0, remote: !!d.remote, at: d.remote ? d.remote.at : 0, pairReq: d.pairReq || 0 })),
+  };
+}
+async function remoteDoor(req, res, key, rest, url) {
+  cors(req, res);
+  if (req.method === "OPTIONS") return (res.writeHead(204), res.end());
+  const ip = String(req.headers["x-forwarded-for"] || req.socket.remoteAddress || "?").split(",")[0].trim(),
+    now = Date.now(),
+    bad = (remBad.get(ip) || []).filter((t) => now - t < 3600000);
+  if (bad.length >= 20) return fail(res, 429, "Too many wrong keys. Try again in an hour.");
+  const R = remLoad(),
+    k = R.keys.find((x) => safeEq(x.key, key));
+  if (!k) return (bad.push(now), remBad.set(ip, bad), fail(res, 404, "That key isn't on this Hub. It may have been removed on the rig."));
+  const h = (remHits.get(k.id) || []).filter((t) => now - t < 60000);
+  if (h.length >= 900) return fail(res, 429, "Slow down a little and try again.");
+  h.push(now);
+  remHits.set(k.id, h);
+  now - (k.used || 0) > 60000 && ((k.used = now), writeJson(hubf("remote.json"), R));
+  req.wbRemote = !0;
+  req.wbKey = k;
+  req.url = rest + url.search;
+  if (rest === "/ollama" || rest.startsWith("/ollama/")) {
+    // the AI, with the key alone: chatting, and the list of models
+    if (!/^\/api\/(chat|generate|tags|show|version|ps)$/.test(rest.slice(7) || "/")) return fail(res, 404, "Not here.");
+    return proxyOllama(req, res, new URL(req.url, "http://hub"));
+  }
+  if (rest === "/ping" || rest === "/api/ping") return json(res, 200, { ok: !0, hub: "Workbench Hub", version: VERSION, name: C.name, anywhere: !0, full: !!k.full, time: Date.now() });
+  if (!k.full) return fail(res, 403, "This key is only for the AI. On the rig, make a key that can also sign in.");
+  if (rest === "/" || rest === "/index.html") return fail(res, 404, "Not here.");
+  return route(req, res);
+}
 async function inboxRoute(req, res) {
   const url = new URL(req.url, "http://inbox"),
-    o = req.headers.origin && allowOrigin(req.headers.origin);
+    o = req.headers.origin && allowOrigin(req.headers.origin),
+    RD = /^\/k\/(wbk_[A-Za-z0-9_-]{20,80})(\/.*)?$/.exec(url.pathname);
+  if (RD) return remoteDoor(req, res, RD[1], RD[2] || "/", url);
   res.setHeader("Vary", "Origin");
   if (o) (res.setHeader("Access-Control-Allow-Origin", o), res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS"), res.setHeader("Access-Control-Allow-Headers", "Content-Type"));
   if (req.method === "OPTIONS") return (res.writeHead(204), res.end());
@@ -1194,7 +1311,7 @@ async function inboxRoute(req, res) {
     writeJson(hubf("public.json"), S);
     const who = (r.items.find((x) => x.map === "name") || r.items.find((x) => x.type === "short" && x.value) || {}).value || "Someone";
     log("Form:", f.title, "·", who);
-    pubNotify(f.kind === "company" ? "New company sign-up" : f.kind === "artist" ? "New artist sign-up" : "New answer: " + f.title, String(who), "form", r.id);
+    pubNotify(f.kind === "company" ? "New company sign-up" : f.kind === "artist" ? "New artist sign-up" : "New answer: " + f.title, String(who), "form", r.id, f.kind === "company" ? [["approve", "Approve"], ["decline", "Turn down"]] : [["done", "Done"]]);
     return json(res, 200, { ok: !0 });
   }
   if (S.msgs.length >= 1000) return fail(res, 503, "Messages are full right now. Try again later.");
@@ -1204,14 +1321,15 @@ async function inboxRoute(req, res) {
   S.msgs.push(m);
   writeJson(hubf("public.json"), S);
   log("Message for", c.name);
-  pubNotify("Message for " + c.name, (m.name ? m.name + ": " : "") + m.text.slice(0, 120), "message", m.id);
+  pubNotify("Message for " + c.name, (m.name ? m.name + ": " : "") + m.text.slice(0, 120), "message", m.id, [["done", "Passed on"]]);
   return json(res, 200, { ok: !0 });
 }
 // what the owner (everything) or the Spotlight artist (the artist and the tracks) gets
 function pubView(u) {
   const S = pubLoad();
   if (u.role === "owner")
-    return Object.assign({}, S, { publish: C.publish ? { repo: C.publish.repo, branch: C.publish.branch, key: !!ghTok() } : null, inbox: { on: !!C.inbox, url: C.inboxUrl || "" }, owner: !0, dirty: (S.changedAt || 0) > ((S.published && S.published.at) || 0), events: (S.events || []).slice(0, 40), responses: (S.responses || []).slice(0, 300) });
+    return Object.assign({}, S, {
+      pairs: DV.devices.filter((d) => d.user === u.id && d.pairReq && !d.remote).map((d) => ({ id: d.id, name: d.name, at: d.pairReq })), publish: C.publish ? { repo: C.publish.repo, branch: C.publish.branch, key: !!ghTok() } : null, inbox: { on: !!C.inbox, url: C.inboxUrl || "" }, owner: !0, dirty: (S.changedAt || 0) > ((S.published && S.published.at) || 0), events: (S.events || []).slice(0, 40), responses: (S.responses || []).slice(0, 300) });
   return { artist: S.artist, tracks: S.tracks, owner: !1 };
 }
 
@@ -1231,7 +1349,7 @@ function formDefaults() {
       kind: "company",
       title: "List your company",
       desc: "Tell us about your business. Once it's approved it shows up in Discover, with its own link to send people.",
-      open: !0,
+      open: !1,
       fields: [
         fld("short", "Company name", 1, "name"),
         fld("short", "What you do", 0, "category", "Food, signs, auto, beauty…"),
@@ -1249,14 +1367,14 @@ function formDefaults() {
         fld("short", "How we reach you (not shown)", 1, "contact", "Phone or email"),
       ],
     },
-    { id: id36(), slug: "contact", kind: "contact", title: "Contact Workbench", desc: "Write to us. We'll get back to you.", open: !0, fields: [fld("short", "Your name"), fld("short", "How to reach you", 1, "", "Phone or email"), fld("long", "Message", 1)] },
+    { id: id36(), slug: "contact", kind: "contact", title: "Contact Workbench", desc: "Write to us. We'll get back to you.", open: !1, fields: [fld("short", "Your name"), fld("short", "How to reach you", 1, "", "Phone or email"), fld("long", "Message", 1)] },
     {
       id: id36(),
       slug: "artist-sign-up",
       kind: "artist",
       title: "Be on Spotlight",
       desc: "Make music? Tell us about it, and where we can hear it.",
-      open: !0,
+      open: !1,
       fields: [fld("short", "Artist name", 1), fld("short", "How to reach you", 1, "", "Phone or email"), fld("link", "Where we can hear you", 0, "", "SoundCloud, YouTube, Instagram…"), fld("long", "About you"), fld("image", "A photo")],
     },
   ];
@@ -1271,7 +1389,7 @@ function formSlug(title, id) {
 function formSave(b) {
   const S = pubLoad(),
     old = b.id && S.forms.find((f) => f.id === b.id),
-    f = old || { id: id36(), at: Date.now(), open: !0, kind: "custom" },
+    f = old || { id: id36(), at: Date.now(), open: !1, kind: "custom" },
     title = clip(b.title, 120) || f.title;
   if (!title) throw Object.assign(new Error("A form needs a title."), { code: 400 });
   if (!old || (b.slug && b.slug !== f.slug)) f.slug = formSlug(b.slug || title, f.id);
@@ -1398,6 +1516,7 @@ async function route(req, res) {
   }
   if (p === "/api/ping") return json(res, 200, { ok: !0, hub: "Workbench Hub", version: VERSION, name: C.name, setup: U.users.length > 0, time: Date.now() });
   if (p === "/api/login" && M === "POST") return json(res, 200, login(await jsonBody(req, 1e4)));
+  if (p === "/api/act" && M === "POST") return json(res, 200, actDo(await jsonBody(req, 2e3)));
   const a = auth(req, url);
   if (!a) return fail(res, 401, "Sign in to the Hub again.");
   const u = a.user,
@@ -1414,7 +1533,11 @@ async function route(req, res) {
         const s = fs.statfsSync(C.root);
         disk = { free: s.bavail * s.bsize, size: s.blocks * s.bsize };
       } catch {}
-      return json(res, 200, { user: pub(u), device: { id: a.device.id, name: a.device.name, push: !!a.device.push }, hub: { name: C.name, version: VERSION, disk: owner ? disk : null, rig: fromRig(req) } });
+      const via = String(url.searchParams.get("via") || "");
+      // remember which sign-in is the rig's own (a Rig Remote can't sign the rig out by mistake)
+      fromRig(req) && !a.device.rig && ((a.device.rig = !0), saveDevicesSoon());
+      /^https?:\/\/[^\s"'<>]{3,300}$/.test(via) && via !== a.device.via && ((a.device.via = via.replace(/\/+$/, "")), saveDevicesSoon());
+      return json(res, 200, { user: pub(u), device: { id: a.device.id, name: a.device.name, push: !!a.device.push, remote: !!a.device.remote, pairReq: a.device.pairReq || 0 }, hub: { name: C.name, version: VERSION, disk: owner ? disk : null, rig: fromRig(req), anywhere: !!req.wbRemote } });
     }
     case "/api/system/history":
       if (!owner) return fail(res, 403, "Only the owner can see the rig's health.");
@@ -1431,6 +1554,7 @@ async function route(req, res) {
     case "/api/system/ai": {
       if (!owner) return fail(res, 403, "Only the owner can do that.");
       if (M !== "POST") break;
+      if (!rigCtl(req, a)) return ctlNo(res);
       const b = await jsonBody(req, 1e4),
         m = String(b.model || "").slice(0, 200);
       if (!m) return fail(res, 400, "Which model?");
@@ -1530,6 +1654,7 @@ async function route(req, res) {
     }
     case "/api/pub/form": {
       if (!owner) return fail(res, 403, "Only the owner makes forms.");
+      if (!rigCtl(req, a)) return ctlNo(res);
       if (M === "DELETE") {
         const S = pubLoad();
         S.forms = S.forms.filter((f) => f.id !== url.searchParams.get("id"));
@@ -1565,6 +1690,7 @@ async function route(req, res) {
     case "/api/pub/setup":
       if (!owner) return fail(res, 403, "Only the owner.");
       if (M !== "POST") break;
+      if (!rigAdmin(req, a)) return adminNo(res);
       {
         const r = await pubSetup(await jsonBody(req, 1e4));
         return json(res, 200, Object.assign(pubView(u), { setup: r }));
@@ -1572,6 +1698,7 @@ async function route(req, res) {
     case "/api/pub/publish":
       if (!owner) return fail(res, 403, "Only the owner publishes.");
       if (M !== "POST") break;
+      if (!rigCtl(req, a)) return ctlNo(res);
       {
         const r = await publish();
         return json(res, 200, Object.assign(pubView(u), { done: r }));
@@ -1579,6 +1706,7 @@ async function route(req, res) {
     case "/api/pub/inbox":
       if (!owner) return fail(res, 403, "Only the owner.");
       if (M !== "POST") break;
+      if (!rigAdmin(req, a)) return adminNo(res);
       {
         const r = await inboxSet(!!(await jsonBody(req, 1e3)).on);
         return json(res, 200, Object.assign(pubView(u), { inboxResult: r }));
@@ -1599,7 +1727,8 @@ async function route(req, res) {
     }
     case "/api/users":
       if (!owner) return fail(res, 403, "Only the owner can manage people.");
-      if (M === "GET") return json(res, 200, { users: U.users.map((x) => ({ ...pub(x), created: x.created, devices: DV.devices.filter((d) => d.user === x.id).map((d) => ({ id: d.id, name: d.name, seen: d.seen, push: !!d.push })) })) });
+      if (M !== "GET" && !rigAdmin(req, a)) return adminNo(res);
+      if (M === "GET") return json(res, 200, { users: U.users.map((x) => ({ ...pub(x), created: x.created, devices: DV.devices.filter((d) => d.user === x.id).map((d) => ({ id: d.id, name: d.name, seen: d.seen, push: !!d.push, rig: !!d.rig })) })) });
       if (M === "POST") {
         const b = await jsonBody(req, 1e4);
         const nu = addUser(b.name, b.pin, "member", !!b.work);
@@ -1633,6 +1762,7 @@ async function route(req, res) {
       if (M === "DELETE") {
         const d = DV.devices.find((x) => x.id === url.searchParams.get("id"));
         if (!d || (!owner && d.user !== u.id)) return fail(res, 404, "No such device.");
+        if (d.user !== u.id && !rigCtl(req, a)) return ctlNo(res);
         DV.devices = DV.devices.filter((x) => x !== d);
         saveDevices();
         return json(res, 200, { ok: !0 });
@@ -1778,6 +1908,7 @@ async function route(req, res) {
     // ---- folders on the rig (the owner adds them; nothing is moved or copied)
     case "/api/libraries": {
       if (!owner) return fail(res, 403, "Only the owner can choose the rig's folders.");
+      if (M !== "GET" && !rigAdmin(req, a)) return adminNo(res);
       if (M === "POST") {
         const b = await jsonBody(req, 2e4),
           p = path.resolve(String(b.path || ""));
@@ -1824,7 +1955,67 @@ async function route(req, res) {
     }
     case "/api/browse":
       if (!owner) return fail(res, 403, "Only the owner can look through the rig's folders.");
+      if (!rigAdmin(req, a)) return adminNo(res);
       return json(res, 200, browse(url.searchParams.get("path") || ""));
+    // ---- Rig Remote (a phone the owner pairs from the rig) and "use from anywhere" keys (1.5.0)
+    case "/api/remote": {
+      if (!rigAdmin(req, a)) return adminNo(res);
+      return json(res, 200, remoteView());
+    }
+    case "/api/remote/key": {
+      if (!rigAdmin(req, a)) return adminNo(res);
+      const R = remLoad();
+      if (M === "DELETE") {
+        const k = R.keys.find((x) => x.id === url.searchParams.get("id"));
+        R.keys = R.keys.filter((x) => x !== k);
+        writeJson(hubf("remote.json"), R);
+        k && log("Anywhere key removed:", k.name);
+        return json(res, 200, remoteView());
+      }
+      if (M !== "POST") break;
+      const b = await jsonBody(req, 1e4),
+        name = clip(b.name, 40) || "A device";
+      if (R.keys.length >= 20) return fail(res, 400, "That's a lot of keys. Remove one you don't use first.");
+      const k = { id: id36(), name, key: "wbk_" + crypto.randomBytes(24).toString("base64url"), at: Date.now(), used: 0, full: b.full !== !1 };
+      R.keys.push(k);
+      writeJson(hubf("remote.json"), R);
+      log("Anywhere key made:", name);
+      pubEvent("remote", "Made a key: " + name, k.full ? "The AI, and sign-in with a name and PIN" : "The AI only");
+      return json(res, 200, Object.assign(remoteView(), { made: k.id }));
+    }
+    case "/api/remote/pair": {
+      if (!owner) return fail(res, 403, "Only the owner's phone can be a Rig Remote.");
+      if (M !== "POST") break;
+      if (a.device.remote) return json(res, 200, { remote: !0 });
+      if (fromRig(req)) return fail(res, 400, "This is the rig itself. Pair your phone instead.");
+      a.device.pairReq = Date.now();
+      saveDevices();
+      pubNotify("Rig Remote: allow " + a.device.name + "?", u.name + " asked from " + a.device.name + ". Allow it on the rig.", "remote", a.device.id);
+      return json(res, 200, { remote: !1, pairReq: a.device.pairReq });
+    }
+    case "/api/remote/allow": {
+      if (!rigAdmin(req, a)) return adminNo(res);
+      if (M !== "POST") break;
+      const b = await jsonBody(req, 1e4),
+        d = DV.devices.find((x) => x.id === b.id);
+      if (!d || !U.users.some((x) => x.id === d.user && x.role === "owner")) return fail(res, 404, "No such phone.");
+      d.remote = b.on ? { at: Date.now() } : null;
+      d.pairReq = 0;
+      saveDevices();
+      pubEvent("remote", (b.on ? "Rig Remote allowed: " : "Rig Remote removed: ") + d.name, "");
+      broadcast({ type: "remote" }, (c) => c.device === d);
+      log(b.on ? "Rig Remote allowed:" : "Rig Remote removed:", d.name);
+      return json(res, 200, Object.assign(remoteView(), pubView(u)));
+    }
+    case "/api/hub/restart":
+      if (M !== "POST") break;
+      if (!rigCtl(req, a)) return ctlNo(res);
+      log("Restart asked by", u.name, "on", a.device.name);
+      pubEvent("update", "Hub restarted", "from " + a.device.name);
+      json(res, 200, { ok: !0 });
+      // the icon by the clock starts it again in a few seconds
+      setTimeout(() => process.exit(4), 600);
+      return;
     // ---- notifications
     case "/api/push/key":
       return json(res, 200, { key: VAPID.pub });
@@ -1889,7 +2080,9 @@ function main() {
   srv.listen(C.port, C.host, () => log("Workbench Hub", VERSION, "on http://" + C.host + ":" + C.port, "· folder", C.root));
   // the public inbox: only company applications and messages (shared to the internet by Tailscale Funnel)
   const ib = http.createServer((req, res) => inboxRoute(req, res).catch((e) => fail(res, typeof e.code === "number" ? e.code : 500, e.message || "Something went wrong.")));
-  ib.requestTimeout = 30000;
+  // (long enough for an upload through the anywhere door; the inbox's own posts are small)
+  ib.requestTimeout = 20 * 60000;
+  ib.headersTimeout = 30000;
   ib.on("error", (e) => log("Inbox can't start:", e.message));
   ib.listen(C.inboxPort || 8771, "127.0.0.1");
   setTimeout(checkReminders, 20000);
