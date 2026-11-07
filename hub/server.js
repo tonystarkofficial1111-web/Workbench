@@ -17,7 +17,7 @@ const http = require("http"),
   { readTags } = require("./tags.js"),
   { __wbReminders } = require("./reminders.js");
 
-const VERSION = "1.5.1";
+const VERSION = "1.6.0";
 const HOME = process.env.WB_HUB_HOME || path.join(__dirname, "..");
 const CONF = process.env.WB_HUB_CONFIG || path.join(HOME, "hub.json");
 const APP = "https://tonystarkofficial1111-web.github.io";
@@ -866,7 +866,8 @@ function fromRig(req) {
 }
 // the owner on the rig itself, or on a phone the owner paired as a Rig Remote (1.5.0)
 const rigCtl = (req, a) => a.user.role === "owner" && (fromRig(req) || !!(a.device && a.device.remote));
-// the rig itself only (folders, people, keys, publishing setup): never a phone, never the anywhere door
+// the rig itself only (the keys, pairing codes and who may be a Rig Remote): never a phone, never the
+// anywhere door. (1.6.0: a paired Rig Remote can change everything else the rig's own screen can.)
 const rigAdmin = (req, a) => a.user.role === "owner" && fromRig(req);
 const ctlNo = (res) => fail(res, 403, "Only on the rig, or on a phone you paired as a Rig Remote.");
 const adminNo = (res) => fail(res, 403, "Only on the rig itself.");
@@ -1165,6 +1166,8 @@ function pubData() {
     v: 1,
     at: Date.now(),
     inbox: C.inbox && C.inboxUrl ? C.inboxUrl : "",
+    today: S.dayCo && live.some((c) => c.slug === S.dayCo.slug) ? S.dayCo : null,
+    stats: Object.fromEntries(live.map((c) => [c.slug, trfSum("co", c.slug, 30)]).filter((x) => x[1] >= 5)),
     forms: (S.forms || []).filter((f) => f.open).map((f) => ({ slug: f.slug, title: f.title, desc: f.desc || "", kind: f.kind, fields: f.fields.map((q) => ({ id: q.id, type: q.type, label: q.label, help: q.help, req: q.req, opts: q.opts })) })),
     companies: live.map((c) => ({ id: c.id, slug: c.slug, name: c.name, category: c.category || "", description: c.description || "", city: c.city || "", address: c.address || "", phone: c.phone || "", email: c.email || "", website: c.website || "", socials: c.socials || {}, deal: c.deal || "", code: c.code || "", featured: !!c.featured, logo: m(c.logo) })),
     spotlight: tracks.length || S.artist.name ? { artist: { name: S.artist.name || "", bio: S.artist.bio || "", photo: m(S.artist.photo), socials: S.artist.socials || {} }, epoch: S.radioEpoch, tracks: tracks.map((t) => ({ id: t.id, title: t.title, dur: t.dur || 0, file: m(t.file), cover: m(t.cover), at: t.at })) } : null,
@@ -1257,6 +1260,92 @@ function inboxLimit(req) {
   a.push(now);
   inboxHits.set(ip, a);
 }
+// ---- traffic (1.6.0): anonymous counts the website sends to the inbox: no addresses, no cookies ----
+let TRF = null;
+const trfLoad = () => (TRF = TRF || readJson(hubf("traffic.json"), { days: {} }));
+const dayKey = (t) => new Date((t || Date.now()) - new Date().getTimezoneOffset() * 6e4).toISOString().slice(0, 10);
+let trfT = 0;
+function trfHit(kind, slug) {
+  const T = trfLoad(),
+    d = (T.days[dayKey()] = T.days[dayKey()] || { open: 0, ref: {}, form: {}, co: {}, sent: {} });
+  if (kind === "open") d.open++;
+  else if (["ref", "form", "co", "sent"].includes(kind) && /^[a-z0-9-]{1,60}$/.test(slug)) {
+    const m = d[kind] || (d[kind] = {});
+    if (Object.keys(m).length < 300 || m[slug]) m[slug] = (m[slug] || 0) + 1;
+  } else return;
+  const keep = Object.keys(T.days).sort().slice(-70);
+  for (const k of Object.keys(T.days)) keep.includes(k) || delete T.days[k];
+  clearTimeout(trfT);
+  trfT = setTimeout(() => writeJson(hubf("traffic.json"), T), 4000);
+}
+// the last N days of one counter for one company or form
+function trfSum(kind, slug, days) {
+  const T = trfLoad(),
+    from = dayKey(Date.now() - days * 864e5);
+  let n = 0;
+  for (const [k, d] of Object.entries(T.days)) k >= from && (n += (d[kind] && d[kind][slug]) || 0);
+  return n;
+}
+const hitHits = new Map();
+function hitLimit(req) {
+  const ip = String(req.headers["x-forwarded-for"] || req.socket.remoteAddress || "?").split(",")[0].trim(),
+    now = Date.now(),
+    a = (hitHits.get(ip) || []).filter((t) => now - t < 3600000);
+  if (a.length >= 120) return !1;
+  a.push(now);
+  hitHits.set(ip, a);
+  hitHits.size > 5000 && hitHits.clear();
+  return !0;
+}
+// ---- pairing codes (1.6.0): the rig shows a code, the device types it, and it's connected ----
+const PAIR = new Map(),
+  pairTries = new Map();
+const PAIRABC = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+function pairNew(b) {
+  const owner = U.users.find((x) => x.role === "owner"),
+    u = !b.user || b.user === "me" ? owner : U.users.find((x) => x.id === b.user);
+  if (!u) throw Object.assign(new Error("Nobody like that on the Hub."), { code: 404 });
+  let code;
+  do code = Array.from(crypto.randomBytes(6), (x) => PAIRABC[x % PAIRABC.length]).join("");
+  while (PAIR.has(code));
+  for (const [k, v] of PAIR) v.exp < Date.now() && PAIR.delete(k);
+  [...PAIR].length >= 20 && PAIR.delete(PAIR.keys().next().value);
+  const exp = Date.now() + 5 * 60000;
+  PAIR.set(code, { user: u.id, name: clip(b.name, 40) || "New device", exp });
+  log("Pairing code made for", u.name);
+  return { code, exp, who: u.name };
+}
+function pairUse(req, b) {
+  const ip = String(req.headers["x-forwarded-for"] || req.socket.remoteAddress || "?").split(",")[0].trim(),
+    now = Date.now(),
+    t = (pairTries.get(ip) || []).filter((x) => now - x < 600000);
+  if (t.length >= 8) throw Object.assign(new Error("Too many tries. Wait 10 minutes."), { code: 429 });
+  const code = String(b.code || "").toUpperCase().replace(/[^A-Z0-9]/g, ""),
+    P = PAIR.get(code);
+  if (!P || P.exp < now) {
+    t.push(now);
+    pairTries.set(ip, t);
+    throw Object.assign(new Error("That code isn't right, or it ran out. Ask for a new one on the rig."), { code: 400 });
+  }
+  PAIR.delete(code);
+  const u = U.users.find((x) => x.id === P.user);
+  if (!u) throw Object.assign(new Error("That person is gone."), { code: 400 });
+  const R = remLoad(),
+    dev = clip(b.device, 60) || P.name,
+    key = { id: id36(), name: dev, key: "wbk_" + crypto.randomBytes(24).toString("base64url"), at: now, used: now, full: !0, paired: !0 },
+    token = crypto.randomBytes(32).toString("base64url"),
+    d = { id: id36(), user: u.id, name: dev, tokenHash: sha(token), created: now, seen: now, push: null, notify: !0, via: C.inboxUrl ? C.inboxUrl + "/k/" + key.key : "" };
+  if (u.role === "owner") d.remote = { at: now, paired: !0 };
+  R.keys.push(key);
+  writeJson(hubf("remote.json"), R);
+  DV.devices.push(d);
+  saveDevices();
+  log("Paired:", u.name, "on", dev);
+  try {
+    pubEvent("device", dev + " paired", u.role === "owner" ? "as a Rig Remote" : "as " + u.name);
+  } catch {}
+  return { key: key.key, url: C.inboxUrl ? C.inboxUrl + "/k/" + key.key : "", token, user: pub(u), device: { id: d.id, name: d.name }, name: C.name, remote: !!d.remote };
+}
 // ---- "use from anywhere" (1.5.0): the same Funnel address, plus a key made on the rig, in the path:
 // https://rig.<tailnet>.ts.net:8443/k/<key>. The key alone lets a device chat with the AI (no
 // Tailscale needed); a key that allows it also lets the device sign in with a name and PIN and use
@@ -1317,6 +1406,12 @@ async function inboxRoute(req, res) {
   if (o) (res.setHeader("Access-Control-Allow-Origin", o), res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS"), res.setHeader("Access-Control-Allow-Headers", "Content-Type"));
   if (req.method === "OPTIONS") return (res.writeHead(204), res.end());
   if (url.pathname === "/ping") return json(res, 200, { ok: !0 });
+  if (req.method === "POST" && url.pathname === "/hit") {
+    const b = await jsonBody(req, 400);
+    hitLimit(req) && trfHit(String(b.k || ""), String(b.s || ""));
+    return json(res, 200, { ok: !0 });
+  }
+  if (req.method === "POST" && url.pathname === "/pair") return json(res, 200, pairUse(req, await jsonBody(req, 2000)));
   if (req.method !== "POST" || !["/apply", "/message", "/form"].includes(url.pathname)) return fail(res, 404, "Not here.");
   const b = await jsonBody(req, 2.2e6),
     S = pubLoad();
@@ -1346,6 +1441,7 @@ async function inboxRoute(req, res) {
     writeJson(hubf("public.json"), S);
     const who = (r.items.find((x) => x.map === "name") || r.items.find((x) => x.type === "short" && x.value) || {}).value || "Someone";
     log("Form:", f.title, "·", who);
+    trfHit("sent", f.slug);
     pubNotify(f.kind === "company" ? "New company sign-up" : f.kind === "artist" ? "New artist sign-up" : "New answer: " + f.title, String(who), "form", r.id, f.kind === "company" ? [["approve", "Approve"], ["decline", "Turn down"]] : [["done", "Done"]]);
     return json(res, 200, { ok: !0 });
   }
@@ -1725,7 +1821,7 @@ async function route(req, res) {
     case "/api/pub/setup":
       if (!owner) return fail(res, 403, "Only the owner.");
       if (M !== "POST") break;
-      if (!rigAdmin(req, a)) return adminNo(res);
+      if (!rigCtl(req, a)) return ctlNo(res);
       {
         const r = await pubSetup(await jsonBody(req, 1e4));
         return json(res, 200, Object.assign(pubView(u), { setup: r }));
@@ -1741,7 +1837,7 @@ async function route(req, res) {
     case "/api/pub/inbox":
       if (!owner) return fail(res, 403, "Only the owner.");
       if (M !== "POST") break;
-      if (!rigAdmin(req, a)) return adminNo(res);
+      if (!rigCtl(req, a)) return ctlNo(res);
       {
         const r = await inboxSet(!!(await jsonBody(req, 1e3)).on);
         return json(res, 200, Object.assign(pubView(u), { inboxResult: r }));
@@ -1762,7 +1858,7 @@ async function route(req, res) {
     }
     case "/api/users":
       if (!owner) return fail(res, 403, "Only the owner can manage people.");
-      if (M !== "GET" && !rigAdmin(req, a)) return adminNo(res);
+      if (M !== "GET" && !rigCtl(req, a)) return ctlNo(res);
       if (M === "GET") return json(res, 200, { users: U.users.map((x) => ({ ...pub(x), created: x.created, devices: DV.devices.filter((d) => d.user === x.id).map((d) => ({ id: d.id, name: d.name, seen: d.seen, push: !!d.push, rig: !!d.rig })) })) });
       if (M === "POST") {
         const b = await jsonBody(req, 1e4);
@@ -1943,7 +2039,7 @@ async function route(req, res) {
     // ---- folders on the rig (the owner adds them; nothing is moved or copied)
     case "/api/libraries": {
       if (!owner) return fail(res, 403, "Only the owner can choose the rig's folders.");
-      if (M !== "GET" && !rigAdmin(req, a)) return adminNo(res);
+      if (M !== "GET" && !rigCtl(req, a)) return ctlNo(res);
       if (M === "POST") {
         const b = await jsonBody(req, 2e4),
           p = path.resolve(String(b.path || ""));
@@ -1990,7 +2086,7 @@ async function route(req, res) {
     }
     case "/api/browse":
       if (!owner) return fail(res, 403, "Only the owner can look through the rig's folders.");
-      if (!rigAdmin(req, a)) return adminNo(res);
+      if (!rigCtl(req, a)) return ctlNo(res);
       return json(res, 200, browse(url.searchParams.get("path") || ""));
     // ---- Rig Remote (a phone the owner pairs from the rig) and "use from anywhere" keys (1.5.0)
     case "/api/remote": {
@@ -2017,6 +2113,27 @@ async function route(req, res) {
       log("Anywhere key made:", name);
       pubEvent("remote", "Made a key: " + name, k.full ? "The AI, and sign-in with a name and PIN" : "The AI only");
       return json(res, 200, Object.assign(remoteView(), { made: k.id }));
+    }
+    case "/api/traffic": {
+      // only the owner, on the rig or on a paired phone
+      if (!rigCtl(req, a)) return ctlNo(res);
+      const T = trfLoad(),
+        S = pubLoad();
+      return json(res, 200, { days: T.days, companies: S.companies.map((c) => ({ slug: c.slug, name: c.name })), forms: S.forms.map((f) => ({ slug: f.slug, title: f.title })) });
+    }
+    case "/api/pair/new": {
+      if (!rigAdmin(req, a)) return adminNo(res);
+      if (M !== "POST") break;
+      return json(res, 200, pairNew(await jsonBody(req, 1000)));
+    }
+    case "/api/pub/today": {
+      if (!rigCtl(req, a)) return ctlNo(res);
+      if (M !== "POST") break;
+      const b = await jsonBody(req, 500),
+        S = pubLoad();
+      S.dayCo = b.slug && S.companies.some((c) => c.slug === b.slug) ? { slug: b.slug, date: /^\d{4}-\d\d-\d\d$/.test(b.date || "") ? b.date : dayKey() } : null;
+      pubSave();
+      return json(res, 200, pubView(u));
     }
     case "/api/remote/pair": {
       if (!owner) return fail(res, 403, "Only the owner's phone can be a Rig Remote.");
