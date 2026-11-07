@@ -17,7 +17,7 @@ const http = require("http"),
   { readTags } = require("./tags.js"),
   { __wbReminders } = require("./reminders.js");
 
-const VERSION = "1.6.0";
+const VERSION = "1.7.0";
 const HOME = process.env.WB_HUB_HOME || path.join(__dirname, "..");
 const CONF = process.env.WB_HUB_CONFIG || path.join(HOME, "hub.json");
 const APP = "https://tonystarkofficial1111-web.github.io";
@@ -963,6 +963,8 @@ function pubLoad() {
     }
     // 1.5.0: a form is on the website only after Post. Forms that went up with an earlier publish
     // count as posted; if nothing was ever published, none are.
+    if (!Array.isArray(P.trails)) P.trails = [];
+    for (const c of P.companies) c.stamp = c.stamp || Array.from(crypto.randomBytes(5), (x) => PAIRABC[x % PAIRABC.length]).join("");
     if (!P.postModel) {
       P.postModel = 1;
       const pb = P.published || (P.published = { at: 0, commit: "", files: {} }),
@@ -1018,6 +1020,7 @@ function companySave(b) {
   if (!name) throw Object.assign(new Error("A company needs a name."), { code: 400 });
   if (!old || name !== c.name) c.slug = uniqueSlug(name, c.id);
   c.name = name;
+  c.stamp = c.stamp || Array.from(crypto.randomBytes(5), (x) => PAIRABC[x % PAIRABC.length]).join("");
   companyFields(c, b);
   "featured" in b && (c.featured = !!b.featured);
   "live" in b && (c.live = !!b.live);
@@ -1166,10 +1169,11 @@ function pubData() {
     v: 1,
     at: Date.now(),
     inbox: C.inbox && C.inboxUrl ? C.inboxUrl : "",
+    trails: (S.trails || []).filter((t) => t.on !== !1 && t.stops.length >= 2).map((t) => ({ id: t.id, title: t.title, desc: t.desc || "", reward: t.reward || "", stops: t.stops.filter((x) => live.some((c) => c.slug === x)) })),
     today: S.dayCo && live.some((c) => c.slug === S.dayCo.slug) ? S.dayCo : null,
     stats: Object.fromEntries(live.map((c) => [c.slug, trfSum("co", c.slug, 30)]).filter((x) => x[1] >= 5)),
     forms: (S.forms || []).filter((f) => f.open).map((f) => ({ slug: f.slug, title: f.title, desc: f.desc || "", kind: f.kind, fields: f.fields.map((q) => ({ id: q.id, type: q.type, label: q.label, help: q.help, req: q.req, opts: q.opts })) })),
-    companies: live.map((c) => ({ id: c.id, slug: c.slug, name: c.name, category: c.category || "", description: c.description || "", city: c.city || "", address: c.address || "", phone: c.phone || "", email: c.email || "", website: c.website || "", socials: c.socials || {}, deal: c.deal || "", code: c.code || "", featured: !!c.featured, logo: m(c.logo) })),
+    companies: live.map((c) => ({ id: c.id, slug: c.slug, sh: sha(c.slug + ":" + c.stamp).slice(0, 10), posts: (c.posts || []).slice(0, 5).map((x) => ({ at: x.at, text: x.text })), name: c.name, category: c.category || "", description: c.description || "", city: c.city || "", address: c.address || "", phone: c.phone || "", email: c.email || "", website: c.website || "", socials: c.socials || {}, deal: c.deal || "", code: c.code || "", featured: !!c.featured, logo: m(c.logo) })),
     spotlight: tracks.length || S.artist.name ? { artist: { name: S.artist.name || "", bio: S.artist.bio || "", photo: m(S.artist.photo), socials: S.artist.socials || {} }, epoch: S.radioEpoch, tracks: tracks.map((t) => ({ id: t.id, title: t.title, dur: t.dur || 0, file: m(t.file), cover: m(t.cover), at: t.at })) } : null,
   };
 }
@@ -1267,9 +1271,9 @@ const dayKey = (t) => new Date((t || Date.now()) - new Date().getTimezoneOffset(
 let trfT = 0;
 function trfHit(kind, slug) {
   const T = trfLoad(),
-    d = (T.days[dayKey()] = T.days[dayKey()] || { open: 0, ref: {}, form: {}, co: {}, sent: {} });
+    d = (T.days[dayKey()] = T.days[dayKey()] || { open: 0, ref: {}, form: {}, co: {}, sent: {}, msg: {}, stamp: {}, trail: {} });
   if (kind === "open") d.open++;
-  else if (["ref", "form", "co", "sent"].includes(kind) && /^[a-z0-9-]{1,60}$/.test(slug)) {
+  else if (["ref", "form", "co", "sent", "msg", "stamp", "trail"].includes(kind) && /^[a-z0-9-]{1,60}$/.test(slug)) {
     const m = d[kind] || (d[kind] = {});
     if (Object.keys(m).length < 300 || m[slug]) m[slug] = (m[slug] || 0) + 1;
   } else return;
@@ -1452,6 +1456,7 @@ async function inboxRoute(req, res) {
   S.msgs.push(m);
   writeJson(hubf("public.json"), S);
   log("Message for", c.name);
+  trfHit("msg", c.slug);
   pubNotify("Message for " + c.name, (m.name ? m.name + ": " : "") + m.text.slice(0, 120), "message", m.id, [["done", "Passed on"]]);
   return json(res, 200, { ok: !0 });
 }
@@ -2125,6 +2130,45 @@ async function route(req, res) {
       if (!rigAdmin(req, a)) return adminNo(res);
       if (M !== "POST") break;
       return json(res, 200, pairNew(await jsonBody(req, 1000)));
+    }
+    case "/api/pub/post": {
+      // a short update on a company's page (and deleting one)
+      if (!rigCtl(req, a)) return ctlNo(res);
+      if (M !== "POST") break;
+      const b = await jsonBody(req, 2000),
+        S = pubLoad(),
+        c = S.companies.find((x) => x.id === b.company);
+      if (!c) return fail(res, 404, "No such company.");
+      c.posts = c.posts || [];
+      if (b.del) c.posts = c.posts.filter((x) => x.id !== b.del);
+      else {
+        const text = clip(b.text, 280);
+        if (!text) return fail(res, 400, "Write the update first.");
+        c.posts.unshift({ id: id36(), at: Date.now(), text });
+        c.posts.length = Math.min(c.posts.length, 20);
+      }
+      pubSave();
+      return json(res, 200, pubView(u));
+    }
+    case "/api/pub/trail": {
+      if (!rigCtl(req, a)) return ctlNo(res);
+      const S = pubLoad();
+      if (M === "DELETE") {
+        S.trails = S.trails.filter((t) => t.id !== url.searchParams.get("id"));
+        pubSave();
+        return json(res, 200, pubView(u));
+      }
+      if (M !== "POST") break;
+      const b = await jsonBody(req, 5000),
+        old = b.id && S.trails.find((t) => t.id === b.id),
+        t = old || { id: id36(), at: Date.now(), on: !0 },
+        stops = [...new Set([].concat(b.stops || []).map((x) => String(x)).filter((x) => S.companies.some((c) => c.slug === x)))].slice(0, 6);
+      if (!clip(b.title, 80)) return fail(res, 400, "Give the trail a name.");
+      if (stops.length < 2) return fail(res, 400, "Pick at least two companies for the trail.");
+      Object.assign(t, { title: clip(b.title, 80), desc: clip(b.desc, 300), reward: clip(b.reward, 200), stops, on: b.on !== !1 });
+      old || S.trails.push(t);
+      pubSave();
+      return json(res, 200, pubView(u));
     }
     case "/api/pub/today": {
       if (!rigCtl(req, a)) return ctlNo(res);
