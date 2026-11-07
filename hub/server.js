@@ -17,7 +17,7 @@ const http = require("http"),
   { readTags } = require("./tags.js"),
   { __wbReminders } = require("./reminders.js");
 
-const VERSION = "1.8.0";
+const VERSION = "1.9.0";
 const HOME = process.env.WB_HUB_HOME || path.join(__dirname, "..");
 const CONF = process.env.WB_HUB_CONFIG || path.join(HOME, "hub.json");
 const APP = "https://tonystarkofficial1111-web.github.io";
@@ -965,7 +965,7 @@ function pubLoad() {
     // 1.5.0: a form is on the website only after Post. Forms that went up with an earlier publish
     // count as posted; if nothing was ever published, none are.
     if (!Array.isArray(P.trails)) P.trails = [];
-    for (const c of P.companies) c.stamp = c.stamp || Array.from(crypto.randomBytes(5), (x) => PAIRABC[x % PAIRABC.length]).join("");
+    for (const c of P.companies) c.stamp = c.stamp || newStamp();
     if (!P.postModel) {
       P.postModel = 1;
       const pb = P.published || (P.published = { at: 0, commit: "", files: {} }),
@@ -1021,7 +1021,7 @@ function companySave(b) {
   if (!name) throw Object.assign(new Error("A company needs a name."), { code: 400 });
   if (!old || name !== c.name) c.slug = uniqueSlug(name, c.id);
   c.name = name;
-  c.stamp = c.stamp || Array.from(crypto.randomBytes(5), (x) => PAIRABC[x % PAIRABC.length]).join("");
+  c.stamp = c.stamp || newStamp();
   companyFields(c, b);
   "featured" in b && (c.featured = !!b.featured);
   "live" in b && (c.live = !!b.live);
@@ -1174,7 +1174,7 @@ function pubData() {
     today: S.dayCo && live.some((c) => c.slug === S.dayCo.slug) ? S.dayCo : null,
     stats: Object.fromEntries(live.map((c) => [c.slug, trfSum("co", c.slug, 30)]).filter((x) => x[1] >= 5)),
     forms: (S.forms || []).filter((f) => f.open).map((f) => ({ slug: f.slug, title: f.title, desc: f.desc || "", kind: f.kind, fields: f.fields.map((q) => ({ id: q.id, type: q.type, label: q.label, help: q.help, req: q.req, opts: q.opts })) })),
-    companies: live.map((c) => ({ id: c.id, slug: c.slug, sh: sha(c.slug + ":" + c.stamp).slice(0, 10), posts: (c.posts || []).slice(0, 5).map((x) => ({ at: x.at, text: x.text })), name: c.name, category: c.category || "", description: c.description || "", city: c.city || "", address: c.address || "", phone: c.phone || "", email: c.email || "", website: c.website || "", socials: c.socials || {}, deal: c.deal || "", code: c.code || "", featured: !!c.featured, logo: m(c.logo) })),
+    companies: live.map((c) => ({ id: c.id, slug: c.slug, sh2: stampHash(c.slug, c.stamp), posts: (c.posts || []).slice(0, 5).map((x) => ({ at: x.at, text: x.text })), name: c.name, category: c.category || "", description: c.description || "", city: c.city || "", address: c.address || "", phone: c.phone || "", email: c.email || "", website: c.website || "", socials: c.socials || {}, deal: c.deal || "", code: c.code || "", featured: !!c.featured, logo: m(c.logo) })),
     spotlight: tracks.length || S.artist.name ? { artist: { name: S.artist.name || "", bio: S.artist.bio || "", photo: m(S.artist.photo), socials: S.artist.socials || {} }, epoch: S.radioEpoch, tracks: tracks.map((t) => ({ id: t.id, title: t.title, dur: t.dur || 0, file: m(t.file), cover: m(t.cover), at: t.at })) } : null,
   };
 }
@@ -1223,6 +1223,7 @@ function publishRun() {
       nc = await gh("/git/commits", { method: "POST", body: { message: "Workbench: publish Discover and Spotlight", tree: nt.sha, parents: [base] } });
     await gh("/git/refs/heads/" + cfg.branch, { method: "PATCH", body: { sha: nc.sha } });
     S.published = { at: Date.now(), commit: nc.sha, files: sent, companies: data.companies.length, tracks: data.spotlight ? data.spotlight.tracks.length : 0, forms: data.forms.length, formU: Object.fromEntries((S.forms || []).filter((f) => f.open).map((f) => [f.id, f.u || f.at || 1])) };
+    delete S.inboxMoved;
     writeJson(hubf("public.json"), S);
     pubEvent("publish", "Published to the website", data.companies.length + " companies, " + S.published.tracks + " songs, " + data.forms.length + " forms");
     log("Published", data.companies.length, "companies and", S.published.tracks, "tracks");
@@ -1255,6 +1256,47 @@ async function inboxSet(on) {
   writeJson(CONF, C);
   log("Inbox", C.inbox ? "on at " + C.inboxUrl : "off");
   return { on: C.inbox, url: C.inboxUrl, out: r.out.slice(0, 600) };
+}
+// ---- 1.9.0: keep the inbox alive (visitor counts, forms, messages all arrive through it) ----------------
+// Every 10 minutes: does Tailscale still give this rig the address the website was told? Does the inbox
+// answer from outside? If the Funnel was switched off (an update, a restart) it is switched on again.
+// A moved address is picked up and the website is marked as needing a publish; an inbox that stays
+// silent is shown on Rig Start. (Tests point WB_INBOX_SELF at the local inbox instead of the public one.)
+const IBH = { at: 0, ok: null, msg: "" };
+async function inboxProbe() {
+  const base = process.env.WB_INBOX_SELF || C.inboxUrl;
+  try {
+    const r = await fetch(base.replace(/\/+$/, "") + "/ping", { signal: AbortSignal.timeout(7000), cache: "no-store" });
+    return r.ok;
+  } catch {
+    return !1;
+  }
+}
+async function inboxWatch() {
+  if (!C.inbox) return void Object.assign(IBH, { at: Date.now(), ok: null, msg: "" });
+  let host = "";
+  try {
+    host = String(JSON.parse((await runAll(TSCLI, ["status", "--json"], 8000)).out).Self.DNSName || "").replace(/\.$/, "");
+  } catch {}
+  const url = host ? "https://" + host + ":8443" : "";
+  if (url && url !== C.inboxUrl) {
+    log("Inbox address changed; the website needs a publish");
+    C.inboxUrl = url;
+    writeJson(CONF, C);
+    const S = pubLoad();
+    S.inboxMoved = !0;
+    pubSave();
+    pubEvent("publish", "The rig's address changed", "Publish so visitor counts and forms reach the rig again.");
+  }
+  let ok = await inboxProbe();
+  if (!ok) {
+    await runAll(TSCLI, ["funnel", "--bg", "--https=8443", "http://127.0.0.1:" + (C.inboxPort || 8771)]);
+    ok = await inboxProbe();
+  }
+  const was = IBH.ok;
+  Object.assign(IBH, { at: Date.now(), ok, msg: ok ? "" : "The inbox doesn't answer from the internet. Visitor counts and forms are paused. Check that Tailscale is running on the rig." });
+  if (was !== !1 && !ok) pubEvent("note", "The inbox isn't answering", IBH.msg);
+  if (was === !1 && ok) pubEvent("note", "The inbox is back", "Visitor counts and forms are coming through again.");
 }
 const inboxHits = new Map();
 function inboxLimit(req) {
@@ -1306,6 +1348,19 @@ function hitLimit(req) {
 const PAIR = new Map(),
   pairTries = new Map();
 const PAIRABC = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+// 1.9.0: a stamp word is 8 letters/digits, and the website holds only a slow, salted scramble of it
+// (PBKDF2, 50,000 rounds) so nobody can work the word out from the published file in any useful time.
+// Words made before 1.9.0 are 5 long and keep working; only the scramble got stronger.
+const newStamp = () => Array.from(crypto.randomBytes(8), (x) => PAIRABC[x % PAIRABC.length]).join("");
+const stampMemo = new Map();
+const stampHash = (slug, word) => {
+  const k = slug + ":" + word;
+  if (!stampMemo.has(k)) {
+    stampMemo.size > 2000 && stampMemo.clear();
+    stampMemo.set(k, crypto.pbkdf2Sync(String(word), "wb-stamp:" + slug, 50000, 16, "sha256").toString("hex"));
+  }
+  return stampMemo.get(k);
+};
 function pairNew(b) {
   const owner = U.users.find((x) => x.role === "owner"),
     u = !b.user || b.user === "me" ? owner : U.users.find((x) => x.id === b.user);
@@ -1466,7 +1521,7 @@ function pubView(u) {
   const S = pubLoad();
   if (u.role === "owner")
     return Object.assign({}, S, {
-      pairs: DV.devices.filter((d) => d.user === u.id && d.pairReq && !d.remote).map((d) => ({ id: d.id, name: d.name, at: d.pairReq })), publish: C.publish ? { repo: C.publish.repo, branch: C.publish.branch, key: !!ghTok(), keyErr: C.publish.keyErr || "" } : null, inbox: { on: !!C.inbox, url: C.inboxUrl || "" }, owner: !0, dirty: (S.changedAt || 0) > ((S.published && S.published.at) || 0), events: (S.events || []).slice(0, 40), responses: (S.responses || []).slice(0, 300) });
+      pairs: DV.devices.filter((d) => d.user === u.id && d.pairReq && !d.remote).map((d) => ({ id: d.id, name: d.name, at: d.pairReq })), publish: C.publish ? { repo: C.publish.repo, branch: C.publish.branch, key: !!ghTok(), keyErr: C.publish.keyErr || "" } : null, inbox: { on: !!C.inbox, url: C.inboxUrl || "", ok: IBH.ok, msg: IBH.msg, at: IBH.at, moved: !!S.inboxMoved }, owner: !0, dirty: (S.changedAt || 0) > ((S.published && S.published.at) || 0), events: (S.events || []).slice(0, 40), responses: (S.responses || []).slice(0, 300) });
   return { artist: S.artist, tracks: S.tracks, owner: !1 };
 }
 
@@ -1663,7 +1718,7 @@ try {
 const brOn = () => !!(C.browser && C.browser.on);
 function brState(u) {
   const st = BRW ? BRW.state(u) : { available: !1, active: null };
-  return Object.assign(st, { on: brOn(), can: canBrowse(u), allowed: canBrowse(u) && brOn(), module: !!BRW, exe: u.role === "owner" ? (C.browser && C.browser.exe) || "" : undefined });
+  return Object.assign(st, { ack: u.role === "owner" || !!u.brAck, on: brOn(), can: canBrowse(u), allowed: canBrowse(u) && brOn(), module: !!BRW, exe: u.role === "owner" ? (C.browser && C.browser.exe) || "" : undefined });
 }
 async function route(req, res) {
   const url = new URL(req.url, "http://hub"),
@@ -1875,6 +1930,12 @@ async function route(req, res) {
         const r = await inboxSet(!!(await jsonBody(req, 1e3)).on);
         return json(res, 200, Object.assign(pubView(u), { inboxResult: r }));
       }
+    case "/api/pub/inbox/check":
+      if (!owner) return fail(res, 403, "Only the owner.");
+      if (M !== "POST") break;
+      if (!rigCtl(req, a)) return ctlNo(res);
+      await inboxWatch();
+      return json(res, 200, pubView(u));
     case "/api/me/pin": {
       const b = await jsonBody(req, 1e4);
       if (pinHash(String(b.old || ""), u.salt) !== u.hash) return fail(res, 401, "Your current PIN isn't right.");
@@ -2251,11 +2312,17 @@ async function route(req, res) {
       if (!rigCtl(req, a)) return ctlNo(res);
       return json(res, 200, { visits: readJson(hubf("browser-log.json"), { visits: [] }).visits.slice(0, 60) });
     }
+    case "/api/browser/ack":
+      if (M !== "POST") break;
+      u.brAck = Date.now();
+      saveUsers();
+      return json(res, 200, brState(u));
     case "/api/browser/start": {
       if (M !== "POST") break;
       if (!BRW) return fail(res, 404, "The rig's browser needs the Hub's update.");
       if (!brOn()) return fail(res, 403, "The owner has the rig's browser switched off.");
       if (!canBrowse(u)) return fail(res, 403, "The owner hasn't turned the rig's browser on for you.");
+      if (u.role !== "owner" && !u.brAck) return fail(res, 409, "Read the notice about the rig's browser first.");
       return json(res, 200, await BRW.start(u, C.browser));
     }
     case "/api/browser/stop":
@@ -2365,6 +2432,8 @@ function main() {
   setTimeout(checkUpdate, 5 * 60000);
   setTimeout(histSample, 45000);
   setInterval(histSample, 10 * 60000);
+  setTimeout(() => inboxWatch().catch((e) => log("inbox:", e.message)), 90000);
+  setInterval(() => inboxWatch().catch((e) => log("inbox:", e.message)), 10 * 60000);
   setInterval(checkUpdate, 6 * 3600000);
 }
 if (require.main === module) main();
