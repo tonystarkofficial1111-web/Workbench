@@ -46,7 +46,7 @@ else {
 
 # ---- 2. the Hub program
 Step "2/7" "The Hub program"
-foreach ($f in "server.js", "push.js", "tags.js", "reminders.js", "tray.ps1", "launch.vbs", "hub.ico", "uninstall.ps1", "README.md") {
+foreach ($f in "server.js", "browser.js", "push.js", "tags.js", "reminders.js", "tray.ps1", "launch.vbs", "hub.ico", "uninstall.ps1", "README.md") {
   if (Test-Path (Join-Path $Src $f)) { Copy-Item (Join-Path $Src $f) (Join-Path $App $f) -Force }
 }
 Say ("  Copied to " + $App)

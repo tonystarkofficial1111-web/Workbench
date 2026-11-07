@@ -17,7 +17,7 @@ const http = require("http"),
   { readTags } = require("./tags.js"),
   { __wbReminders } = require("./reminders.js");
 
-const VERSION = "1.7.0";
+const VERSION = "1.8.0";
 const HOME = process.env.WB_HUB_HOME || path.join(__dirname, "..");
 const CONF = process.env.WB_HUB_CONFIG || path.join(HOME, "hub.json");
 const APP = "https://tonystarkofficial1111-web.github.io";
@@ -87,7 +87,8 @@ const safeName = (s) =>
     .slice(0, 60);
 const userDir = (u, kind) => path.join(C.root, "Users", u.dir, kind || "");
 const canWork = (u) => !!u && (u.role === "owner" || !!u.work);
-const pub = (u) => ({ id: u.id, name: u.name, role: u.role, work: canWork(u), artist: !!u.artist });
+const canBrowse = (u) => !!u && (u.role === "owner" || !!u.browser);
+const pub = (u) => ({ id: u.id, name: u.name, role: u.role, work: canWork(u), artist: !!u.artist, browser: canBrowse(u) });
 function addUser(name, pin, role, work) {
   name = String(name || "").trim();
   if (!name || !/^\d{4,12}$/.test(String(pin))) throw new Error("A name and a PIN of 4 to 12 digits are needed.");
@@ -1637,6 +1638,33 @@ async function histSample() {
 }
 
 // ---- the routes ---------------------------------------------------------------------------------
+// ---- the rig's browser (1.8.0): one person at a time, only the public internet ----
+let BRW = null;
+try {
+  BRW = require("./browser.js").create({
+    log,
+    exe: () => (C.browser && C.browser.exe) || "",
+    onVisit: (host, u) => {
+      // only the host name is kept (not the page or what was typed): who, when, which site
+      const L = readJson(hubf("browser-log.json"), { visits: [] });
+      L.visits.unshift({ at: Date.now(), who: u.name, host });
+      L.visits.length = Math.min(L.visits.length, 300);
+      writeJson(hubf("browser-log.json"), L);
+    },
+    onStop: (u, why) => {
+      try {
+        pubEvent("browser", u.name + " closed the rig's browser", why);
+      } catch {}
+    },
+  });
+} catch (e) {
+  log("The rig's browser isn't available:", e.message);
+}
+const brOn = () => !!(C.browser && C.browser.on);
+function brState(u) {
+  const st = BRW ? BRW.state(u) : { available: !1, active: null };
+  return Object.assign(st, { on: brOn(), can: canBrowse(u), allowed: canBrowse(u) && brOn(), module: !!BRW, exe: u.role === "owner" ? (C.browser && C.browser.exe) || "" : undefined });
+}
 async function route(req, res) {
   const url = new URL(req.url, "http://hub"),
     p = url.pathname,
@@ -1879,6 +1907,7 @@ async function route(req, res) {
         if (x.role === "owner") return fail(res, 400, "The owner can't be changed or removed here.");
         if (M === "PATCH") {
           "work" in b && (x.work = !!b.work);
+          "browser" in b && ((x.browser = !!b.browser), !x.browser && BRW && BRW.active() && BRW.active().user.id === x.id && BRW.stop("Turned off by the owner."));
           "artist" in b && (x.artist = !!b.artist);
           b.pin && setPin(x, b.pin);
           saveUsers();
@@ -2202,6 +2231,54 @@ async function route(req, res) {
       broadcast({ type: "remote" }, (c) => c.device === d);
       log(b.on ? "Rig Remote allowed:" : "Rig Remote removed:", d.name);
       return json(res, 200, Object.assign(remoteView(), pubView(u)));
+    }
+    // ---- the rig's browser
+    case "/api/browser/state":
+      return json(res, 200, brState(u));
+    case "/api/browser/config": {
+      if (!rigCtl(req, a)) return ctlNo(res);
+      if (M !== "POST") break;
+      const b = await jsonBody(req, 2000);
+      C.browser = Object.assign({ on: !1, exe: "" }, C.browser);
+      "on" in b && (C.browser.on = !!b.on);
+      "exe" in b && (C.browser.exe = clip(b.exe, 300));
+      writeJson(CONF, C);
+      !C.browser.on && BRW && BRW.stop("Switched off on the rig.");
+      log("Rig browser", C.browser.on ? "on" : "off");
+      return json(res, 200, Object.assign(brState(u), { visits: readJson(hubf("browser-log.json"), { visits: [] }).visits.slice(0, 40) }));
+    }
+    case "/api/browser/log": {
+      if (!rigCtl(req, a)) return ctlNo(res);
+      return json(res, 200, { visits: readJson(hubf("browser-log.json"), { visits: [] }).visits.slice(0, 60) });
+    }
+    case "/api/browser/start": {
+      if (M !== "POST") break;
+      if (!BRW) return fail(res, 404, "The rig's browser needs the Hub's update.");
+      if (!brOn()) return fail(res, 403, "The owner has the rig's browser switched off.");
+      if (!canBrowse(u)) return fail(res, 403, "The owner hasn't turned the rig's browser on for you.");
+      return json(res, 200, await BRW.start(u, C.browser));
+    }
+    case "/api/browser/stop":
+      if (M !== "POST") break;
+      if (BRW && BRW.active() && (BRW.active().user.id === u.id || owner)) BRW.stop(BRW.active().user.id === u.id ? "Closed." : "Closed by the owner.");
+      return json(res, 200, brState(u));
+    case "/api/browser/go":
+    case "/api/browser/input":
+    case "/api/browser/resize": {
+      if (M !== "POST" || !BRW || !brOn() || !canBrowse(u)) return fail(res, 403, "The rig's browser isn't available.");
+      const b = await jsonBody(req, 20000);
+      if (p.endsWith("/go")) await BRW.go(u, b.url);
+      else if (p.endsWith("/input")) await BRW.input(u, b.events);
+      else await BRW.resize(u, b.w, b.h);
+      return json(res, 200, { ok: !0 });
+    }
+    case "/api/browser/frame": {
+      if (!BRW || !brOn() || !canBrowse(u)) return fail(res, 403, "The rig's browser isn't available.");
+      const f = await BRW.frame(u, +url.searchParams.get("n") || 0, 20000),
+        h = { "Cache-Control": "no-store", "X-Frame": String(f.n), "X-Url": encodeURIComponent(f.url), "X-Title": encodeURIComponent(f.title), "X-Size": f.w + "x" + f.h, "Access-Control-Expose-Headers": "X-Frame, X-Url, X-Title, X-Size" };
+      if (!f.buf) return (res.writeHead(204, h), res.end());
+      res.writeHead(200, Object.assign(h, { "Content-Type": "image/jpeg", "Content-Length": f.buf.length }));
+      return res.end(f.buf);
     }
     case "/api/hub/restart":
       if (M !== "POST") break;
