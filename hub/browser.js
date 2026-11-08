@@ -103,6 +103,15 @@ function create(opts) {
   });
 
   // ---- the filter every request goes through ----
+  // (1.11.0) trying to reach a private address goes in the rule log: once, then at most every 5 minutes
+  function blockNote() {
+    if (S && opts.onBlock && Date.now() - (S.blockAt || 0) > 300000) {
+      S.blockAt = Date.now();
+      try {
+        opts.onBlock(S.user);
+      } catch {}
+    }
+  }
   function makeProxy() {
     const srv = http.createServer(async (req, res) => {
       req.on("error", () => {});
@@ -119,6 +128,7 @@ function create(opts) {
       if (!addr) {
         S && S.blocked++;
         S && (S.lastBlocked = u.hostname);
+        blockNote();
         res.writeHead(403, { "Content-Type": "text/plain" });
         return res.end("Blocked: the rig's browser only reaches the public internet.");
       }
@@ -135,6 +145,7 @@ function create(opts) {
       if (!addr || +m[2] > 65535) {
         S && S.blocked++;
         S && m && (S.lastBlocked = m[1]);
+        blockNote();
         sock.end("HTTP/1.1 403 Forbidden\r\n\r\n");
         return;
       }

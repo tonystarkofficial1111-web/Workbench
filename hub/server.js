@@ -17,7 +17,7 @@ const http = require("http"),
   { readTags } = require("./tags.js"),
   { __wbReminders } = require("./reminders.js");
 
-const VERSION = "1.10.0";
+const VERSION = "1.11.0";
 const HOME = process.env.WB_HUB_HOME || path.join(__dirname, "..");
 const CONF = process.env.WB_HUB_CONFIG || path.join(HOME, "hub.json");
 const APP = "https://tonystarkofficial1111-web.github.io";
@@ -1697,6 +1697,26 @@ async function histSample() {
   }
 }
 
+// ---- 1.11.0: which terms people agreed to, and the rule log (when did someone break something) ----------
+// Every "I understand and agree" is kept: who, which device, which version of the terms and of Workbench, when.
+// The rule log notes who broke what and when, with the terms version they had agreed to at that moment. The
+// rig's browser adds an entry by itself when someone tries to reach a private address; the owner can add more.
+let TM = null;
+const termsLoad = () => (TM = TM || Object.assign({ acc: [], log: [] }, readJson(hubf("terms.json"), {})));
+const termsSave = () => writeJson(hubf("terms.json"), TM);
+function termsOf(userId, at) {
+  let best = null;
+  for (const a of termsLoad().acc) if (a.user === userId && a.at <= at && (!best || a.at > best.at)) best = a;
+  return best;
+}
+function ruleLog(user, what, action, auto) {
+  const T = termsLoad(),
+    at = Date.now(),
+    ac = user && user.id ? termsOf(user.id, at) : null;
+  T.log.unshift({ id: id36(), at, user: (user && user.id) || "", name: (user && user.name) || "", what: clip(what, 400), action: ["none", "warned", "removed", "blocked", "ended"].includes(action) ? action : "none", auto: !!auto, terms: ac ? ac.terms : "", termsAt: ac ? ac.at : 0, app: ac ? ac.app : "" });
+  T.log.length > 500 && (T.log.length = 500);
+  termsSave();
+}
 // ---- the routes ---------------------------------------------------------------------------------
 // ---- the rig's browser (1.8.0): one person at a time, only the public internet ----
 let BRW = null;
@@ -1714,6 +1734,12 @@ try {
     onStop: (u, why) => {
       try {
         pubEvent("browser", u.name + " closed the rig's browser", why);
+      } catch {}
+    },
+    onBlock: (u) => {
+      try {
+        ruleLog(u, "Tried to open a private address (the rig, the home network or the tailnet) in the rig's browser. It was refused.", "blocked", !0);
+        pubEvent("browser", u.name + " tried to open a private address in the rig's browser", "It was refused, and it's in the rule log.");
       } catch {}
     },
   });
@@ -2328,6 +2354,52 @@ async function route(req, res) {
     case "/api/browser/log": {
       if (!rigCtl(req, a)) return ctlNo(res);
       return json(res, 200, { visits: readJson(hubf("browser-log.json"), { visits: [] }).visits.slice(0, 60) });
+    }
+    case "/api/terms/accept": {
+      if (M !== "POST") break;
+      const b = await jsonBody(req, 2000),
+        T = termsLoad(),
+        terms = String(b.terms || "").replace(/[^0-9A-Za-z._-]/g, "").slice(0, 20),
+        dev = (a.device && a.device.name) || "";
+      if (!terms) return fail(res, 400, "Which terms?");
+      const last = T.acc.find((x) => x.user === u.id && x.device === dev && x.terms === terms);
+      if (!last) {
+        T.acc.unshift({ id: id36(), at: Date.now(), user: u.id, name: u.name, device: dev, terms, app: String(b.app || "").replace(/[^0-9A-Za-z._-]/g, "").slice(0, 20), clientAt: +b.at || 0 });
+        T.acc.length > 2000 && (T.acc.length = 2000);
+        termsSave();
+      }
+      return json(res, 200, { ok: !0 });
+    }
+    case "/api/terms": {
+      if (!owner) return fail(res, 403, "Only the owner.");
+      const T = termsLoad(),
+        seen = new Set(),
+        latest = [];
+      for (const x of T.acc) {
+        const k = x.user + "|" + x.device;
+        seen.has(k) || (seen.add(k), latest.push(x));
+      }
+      return json(res, 200, { acc: latest.slice(0, 100), log: T.log.slice(0, 200) });
+    }
+    case "/api/terms/note": {
+      if (!owner) return fail(res, 403, "Only the owner.");
+      if (M !== "POST") break;
+      if (!rigCtl(req, a)) return ctlNo(res);
+      const b = await jsonBody(req, 4000),
+        who = U.users.find((x) => x.id === b.user) || { id: "", name: clip(b.name, 60) };
+      if (!clip(b.what, 400)) return fail(res, 400, "Write what happened.");
+      ruleLog(who, b.what, b.action, !1);
+      return json(res, 200, { log: termsLoad().log.slice(0, 200) });
+    }
+    case "/api/terms/note-del": {
+      if (!owner) return fail(res, 403, "Only the owner.");
+      if (M !== "POST") break;
+      if (!rigCtl(req, a)) return ctlNo(res);
+      const b = await jsonBody(req, 500),
+        T = termsLoad();
+      T.log = T.log.filter((x) => x.id !== b.id);
+      termsSave();
+      return json(res, 200, { log: T.log.slice(0, 200) });
     }
     case "/api/browser/ack":
       if (M !== "POST") break;
