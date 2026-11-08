@@ -17,7 +17,7 @@ const http = require("http"),
   { readTags } = require("./tags.js"),
   { __wbReminders } = require("./reminders.js");
 
-const VERSION = "1.9.0";
+const VERSION = "1.10.0";
 const HOME = process.env.WB_HUB_HOME || path.join(__dirname, "..");
 const CONF = process.env.WB_HUB_CONFIG || path.join(HOME, "hub.json");
 const APP = "https://tonystarkofficial1111-web.github.io";
@@ -1670,6 +1670,16 @@ function trayNote(title, body) {
 }
 // ---- a week of the rig's numbers, every 10 minutes, for the little graphs
 let HIS = null;
+// the website counter's running total (GoatCounter shows it when "Allow adding visitor counts" is on)
+async function goatTotal() {
+  if (!C.countCode) return null;
+  try {
+    const r = await fetch((process.env.WB_GOAT_URL || "https://" + C.countCode + ".goatcounter.com") + "/counter/TOTAL.json", { signal: AbortSignal.timeout(8000) });
+    return r.ok ? parseInt(String((await r.json()).count || "").replace(/[^\d]/g, ""), 10) || 0 : null;
+  } catch {
+    return null;
+  }
+}
 async function histSample() {
   HIS = HIS || readJson(hubf("history.json"), { points: [] });
   try {
@@ -1677,12 +1687,7 @@ async function histSample() {
       disks = diskList(),
       hd = disks.find((d) => d.hub) || disks[0],
       g = gpu && gpu[0];
-    let visits = null;
-    if (C.countCode)
-      try {
-        const r = await fetch("https://" + C.countCode + ".goatcounter.com/counter/TOTAL.json", { signal: AbortSignal.timeout(8000) });
-        r.ok && (visits = parseInt(String((await r.json()).count || "").replace(/[^\d]/g, ""), 10) || 0);
-      } catch {}
+    const visits = await goatTotal();
     HIS.points.push({ t: Date.now(), cpu, ram: Math.round(1000 * (1 - os.freemem() / os.totalmem())) / 10, gpu: g ? g.busy : null, temp: g ? g.temp : null, free: hd ? hd.free : null, online: new Set([...live].map((c) => c.device.id)).size, visits });
     const cut = Date.now() - 7 * 864e5 - 9e5;
     HIS.points = HIS.points.filter((p) => p.t >= cut).slice(-1100);
@@ -1768,7 +1773,19 @@ async function route(req, res) {
         const cc = String(url.searchParams.get("count") || "");
         /^[a-z0-9-]{2,40}$/.test(cc) && cc !== C.countCode && ((C.countCode = cc), writeJson(CONF, C));
       }
-      return json(res, 200, await systemInfo(req));
+      return json(res, 200, Object.assign(await systemInfo(req), { visitsBase: C.visitsBase || 0, visitsBaseAt: C.visitsBaseAt || 0 }));
+    }
+    case "/api/system/visits-base": {
+      // 1.10.0: "count from now": the counter's total so far (the owner's own devices were in it) stops showing
+      if (!owner) return fail(res, 403, "Only the owner can do that.");
+      if (M !== "POST") break;
+      if (!rigCtl(req, a)) return ctlNo(res);
+      const n = await goatTotal();
+      if (n == null) return fail(res, 502, "The counter didn't answer. Try again in a minute.");
+      C.visitsBase = n;
+      C.visitsBaseAt = Date.now();
+      writeJson(CONF, C);
+      return json(res, 200, { visitsBase: n, visitsBaseAt: C.visitsBaseAt });
     }
     case "/api/system/ai": {
       if (!owner) return fail(res, 403, "Only the owner can do that.");

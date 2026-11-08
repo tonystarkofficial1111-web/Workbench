@@ -1,10 +1,10 @@
 {
- "version": "1.9.0",
- "app": "6.12.0",
+ "version": "1.10.0",
+ "app": "6.13.0",
  "files": {
-  "server.js": "c7790d919e0271115e7be31d091ac1738d7dd27634e97a5b93e404460a7e455f",
+  "server.js": "3e8c24610796a0b0723722c31dfe5d6b1ad2bc01960b65da9f631aef0ba86dda",
   "browser.js": "695baaaf979d847b7b6e7223053713e931bcfc5c8b49088be0ed6b7a6bd3ec46",
-  "README.md": "82f1463c55491913cb7f644c1875a7b285f099f2d9173a363f18cc9c725f01f9",
+  "README.md": "51e0a9799e848393e202c641518ace6575ac912c7e52572bb5f8f12a5f8af503",
   "hub.ico": "877b7befcb15c507262b8b092545b740875f110d736193d21251d30e0aa6fdb2",
   "launch.vbs": "dec0e57b4a5c2db94576f1d20dff80972db13f1720d5c3d90a798dfc0e349ee5",
   "push.js": "bb578b9dd5f09389a6539ece0aaf2c61e0b89a88d91e5ac440f0021d9aa157e2",
