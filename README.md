@@ -24,7 +24,7 @@ New to it? Open the **Table** tab (on the rail down the left): it explains every
 
 Nothing to download by hand. Every time Workbench opens with internet, it checks this site and loads the newest version; without internet it opens the copy saved on the device.
 
-To publish a new version, replace `index.html` in this repository with the new build and commit. Everyone gets it the next time they open the app.
+To publish a new version, replace `index.html` in this repository with the new build and commit. Everyone gets it the next time they open the app. Since 6.18 the website's `index.html` is the light copy (about 7.6 MB): the screen-saver videos (`ss/`) and the Play cards' pictures and clips (`fm/`) sit beside it and load only when shown. The single-file build (everything inside, about 20 MB) is the one to save for use without internet.
 
 ## Workbench Hub (the home server)
 

@@ -1,6 +1,6 @@
 // Workbench service worker: keeps a copy of the app on this device so it opens offline, and
 // fetches the newest version from GitHub Pages whenever there is a connection.
-const CACHE = "workbench-app-v3";
+const CACHE = "workbench-app-v4";
 const SHELL = ["./index.html", "./install.html", "./manifest.webmanifest", "./icons/icon-192.png", "./icons/icon-512.png", "./icons/icon-maskable-512.png", "./icons/favicon-32.png"];
 
 self.addEventListener("install", (e) => {
@@ -27,6 +27,9 @@ self.addEventListener("fetch", (e) => {
   if (url.origin !== self.location.origin) return;
   // Spotlight's songs and pictures stream straight from the site (not kept in the app's copy)
   if (url.pathname.includes("/public/media/")) return;
+  // the screen-saver videos and the flagship clips (ss/, fm/) stream too: video is fetched in pieces,
+  // which can't be kept whole here ("Prepare screen savers for offline use" keeps the clips instead)
+  if (/\/(ss|fm)\/[^/]+\.(mp4|webm)$/.test(url.pathname)) return;
   const key = url.origin + (url.pathname.endsWith("/") ? url.pathname + "index.html" : url.pathname);
   e.respondWith(
     (async () => {
