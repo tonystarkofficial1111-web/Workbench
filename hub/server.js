@@ -17,7 +17,7 @@ const http = require("http"),
   { readTags } = require("./tags.js"),
   { __wbReminders } = require("./reminders.js");
 
-const VERSION = "1.11.0";
+const VERSION = "1.12.0";
 const HOME = process.env.WB_HUB_HOME || path.join(__dirname, "..");
 const CONF = process.env.WB_HUB_CONFIG || path.join(HOME, "hub.json");
 const APP = "https://tonystarkofficial1111-web.github.io";
@@ -1170,6 +1170,7 @@ function pubData() {
     v: 1,
     at: Date.now(),
     inbox: C.inbox && C.inboxUrl ? C.inboxUrl : "",
+    google: (C.google && C.google.clientId) || "",
     trails: (S.trails || []).filter((t) => t.on !== !1 && t.stops.length >= 2).map((t) => ({ id: t.id, title: t.title, desc: t.desc || "", reward: t.reward || "", stops: t.stops.filter((x) => live.some((c) => c.slug === x)) })),
     today: S.dayCo && live.some((c) => c.slug === S.dayCo.slug) ? S.dayCo : null,
     stats: Object.fromEntries(live.map((c) => [c.slug, trfSum("co", c.slug, 30)]).filter((x) => x[1] >= 5)),
@@ -1297,6 +1298,134 @@ async function inboxWatch() {
   Object.assign(IBH, { at: Date.now(), ok, msg: ok ? "" : "The inbox doesn't answer from the internet. Visitor counts and forms are paused. Check that Tailscale is running on the rig." });
   if (was !== !1 && !ok) pubEvent("note", "The inbox isn't answering", IBH.msg);
   if (was === !1 && ok) pubEvent("note", "The inbox is back", "Visitor counts and forms are coming through again.");
+}
+// ---- 1.12.0: Google accounts: people's progress kept on the rig ------------------------------------
+// Someone signs in with Google on the website; Google proves who they are (a signed ID token the rig checks
+// against Google's public keys) and the rig keeps their Workbench progress: profile, settings, scores and
+// notes, never Block World worlds (those stay on their device). One file per person, 5 MB at most, plus the
+// version before the last save. People are known by Google's permanent id, not their email.
+const GCERTS = process.env.WB_GOOGLE_CERTS || "https://www.googleapis.com/oauth2/v3/certs";
+const ACCT_MAX = 5e6;
+let gKeys = { at: 0, keys: [] };
+async function googleKeys(force) {
+  if (!force && Date.now() - gKeys.at < 3600000 && gKeys.keys.length) return gKeys.keys;
+  let r;
+  try {
+    r = await fetch(GCERTS, { signal: AbortSignal.timeout(8000) });
+  } catch {}
+  if (!r || !r.ok) throw Object.assign(new Error("Google didn't answer. Try again in a minute."), { code: 502 });
+  gKeys = { at: Date.now(), keys: (await r.json()).keys || [] };
+  return gKeys.keys;
+}
+const b64u = (s) => Buffer.from(String(s).replace(/-/g, "+").replace(/_/g, "/"), "base64");
+async function googleVerify(tok) {
+  const id = C.google && C.google.clientId,
+    no = (m) => Object.assign(new Error(m || "That sign-in didn't work. Try again."), { code: 401 });
+  if (!id) throw Object.assign(new Error("Google sign-in isn't switched on for this rig yet."), { code: 400 });
+  const parts = String(tok || "").split(".");
+  if (parts.length !== 3 || String(tok).length > 4096) throw no();
+  let h, p;
+  try {
+    h = JSON.parse(b64u(parts[0]).toString("utf8"));
+    p = JSON.parse(b64u(parts[1]).toString("utf8"));
+  } catch {
+    throw no();
+  }
+  if (h.alg !== "RS256" || !h.kid) throw no();
+  let k = (await googleKeys()).find((x) => x.kid === h.kid);
+  k || (k = (await googleKeys(!0)).find((x) => x.kid === h.kid));
+  if (!k) throw no();
+  let ok = !1;
+  try {
+    ok = crypto.verify("RSA-SHA256", Buffer.from(parts[0] + "." + parts[1]), crypto.createPublicKey({ key: k, format: "jwk" }), b64u(parts[2]));
+  } catch {}
+  if (!ok) throw no();
+  if (!["accounts.google.com", "https://accounts.google.com"].includes(p.iss) || p.aud !== id || !(p.exp * 1000 > Date.now() - 60000) || !p.sub) throw no("That sign-in has run out or isn't for this site. Try again.");
+  if (p.email_verified === !1) throw no("That Google account's email isn't verified yet.");
+  return { sub: String(p.sub), email: clip(p.email, 200), name: clip(p.name || p.given_name || "", 80) };
+}
+const acctId = (sub) => sha("google:" + sub).slice(0, 32);
+const acctFile = (id, prev) => path.join(hubf("accounts"), id + (prev ? ".prev" : "") + ".json");
+const acctIndex = () => readJson(hubf("accounts.json"), { list: [] });
+function acctKey() {
+  if (!C.acctKey) ((C.acctKey = crypto.randomBytes(32).toString("hex")), writeJson(CONF, C));
+  return C.acctKey;
+}
+const acctSig = (body) => crypto.createHmac("sha256", acctKey()).update(body).digest("base64url");
+const acctTok = (id) => {
+  const body = id + "." + (Date.now() + 60 * 864e5);
+  return "a1." + body + "." + acctSig(body);
+};
+function acctCheck(t) {
+  const m = /^a1\.([0-9a-f]{32})\.(\d{13})\.([A-Za-z0-9_-]{43})$/.exec(String(t || ""));
+  if (!m || +m[2] < Date.now()) return null;
+  const a = Buffer.from(acctSig(m[1] + "." + m[2])),
+    b = Buffer.from(m[3]);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+  return fs.existsSync(acctFile(m[1])) ? m[1] : null;
+}
+function acctIndexPut(A) {
+  const I = acctIndex(),
+    e = { id: A.id, email: A.email, name: A.name, created: A.created, seen: A.seen, size: A.size || 0 },
+    i = I.list.findIndex((x) => x.id === A.id);
+  i < 0 ? I.list.push(e) : (I.list[i] = e);
+  writeJson(hubf("accounts.json"), I);
+}
+// Block World worlds never come here, even if a device sends them
+const acctClean = (st) => Object.fromEntries(Object.entries(st || {}).filter(([k, v]) => typeof v === "string" && /^(wb[-_]|stark_)/.test(k) && !/world|^wb-bw/i.test(k)));
+const acctView = (A) => ({ account: { email: A.email, name: A.name, created: A.created }, rev: A.rev || "", save: A.save || null, size: A.size || 0, limit: ACCT_MAX });
+const acctHits = new Map();
+function acctLimit(req, n) {
+  const ip = String(req.headers["x-forwarded-for"] || req.socket.remoteAddress || "?").split(",")[0].trim() + "|" + n,
+    now = Date.now(),
+    a = (acctHits.get(ip) || []).filter((t) => now - t < 3600000);
+  if (a.length >= n) throw Object.assign(new Error("Too many in a short time. Try again later."), { code: 429 });
+  a.push(now);
+  acctHits.set(ip, a);
+  acctHits.size > 5000 && acctHits.clear();
+}
+async function acctRoute(req, res, what) {
+  if (what === "google") {
+    acctLimit(req, 40);
+    const b = await jsonBody(req, 8000),
+      g = await googleVerify(b.credential),
+      id = acctId(g.sub);
+    fs.mkdirSync(hubf("accounts"), { recursive: !0 });
+    const A = readJson(acctFile(id), null) || { id, sub: g.sub, created: Date.now(), rev: "", save: null, size: 0 };
+    const isNew = !A.seen;
+    Object.assign(A, { email: g.email, name: g.name, seen: Date.now() });
+    writeJson(acctFile(id), A);
+    acctIndexPut(A);
+    isNew && pubEvent("note", "A new Workbench account", (g.name || "Someone") + " signed in with Google for the first time.");
+    return json(res, 200, Object.assign({ token: acctTok(id) }, acctView(A)));
+  }
+  acctLimit(req, 600);
+  const b = await jsonBody(req, ACCT_MAX * 1.3),
+    id = acctCheck(b.token);
+  if (!id) return fail(res, 401, "Sign in with Google again.");
+  const A = readJson(acctFile(id), null);
+  if (!A) return fail(res, 401, "Sign in with Google again.");
+  if (what === "load") return ((A.seen = Date.now()), writeJson(acctFile(id), A), json(res, 200, acctView(A)));
+  if (what === "save") {
+    if ((b.base || "") !== (A.rev || "")) return json(res, 409, acctView(A));
+    if (!b.save || typeof b.save.storage !== "object") return fail(res, 400, "That isn't Workbench progress.");
+    const storage = acctClean(b.save.storage),
+      text = JSON.stringify(storage);
+    if (text.length > ACCT_MAX) return fail(res, 413, "Your progress is bigger than 5 MB, so it can't be kept on the account. It stays on this device.");
+    A.save && writeJson(acctFile(id, !0), { at: A.saved || 0, storage: A.save.storage });
+    Object.assign(A, { save: { storage }, size: text.length, saved: Date.now(), seen: Date.now(), rev: sha(text + "|" + Date.now()).slice(0, 16) });
+    writeJson(acctFile(id), A);
+    acctIndexPut(A);
+    return json(res, 200, { rev: A.rev, size: A.size, limit: ACCT_MAX });
+  }
+  if (what === "delete") {
+    for (const f of [acctFile(id), acctFile(id, !0)]) await fsp.rm(f, { force: !0 });
+    const I = acctIndex();
+    I.list = I.list.filter((x) => x.id !== id);
+    writeJson(hubf("accounts.json"), I);
+    return json(res, 200, { ok: !0 });
+  }
+  return fail(res, 404, "Not here.");
 }
 const inboxHits = new Map();
 function inboxLimit(req) {
@@ -1472,6 +1601,7 @@ async function inboxRoute(req, res) {
     return json(res, 200, { ok: !0 });
   }
   if (req.method === "POST" && url.pathname === "/pair") return json(res, 200, pairUse(req, await jsonBody(req, 2000)));
+  if (req.method === "POST" && /^\/acct\/(google|load|save|delete)$/.test(url.pathname)) return acctRoute(req, res, url.pathname.slice(6));
   if (req.method !== "POST" || !["/apply", "/message", "/form"].includes(url.pathname)) return fail(res, 404, "Not here.");
   const b = await jsonBody(req, 2.2e6),
     S = pubLoad();
@@ -2354,6 +2484,36 @@ async function route(req, res) {
     case "/api/browser/log": {
       if (!rigCtl(req, a)) return ctlNo(res);
       return json(res, 200, { visits: readJson(hubf("browser-log.json"), { visits: [] }).visits.slice(0, 60) });
+    }
+    case "/api/accounts": {
+      if (!owner) return fail(res, 403, "Only the owner.");
+      const I = acctIndex();
+      return json(res, 200, { clientId: (C.google && C.google.clientId) || "", count: I.list.length, bytes: I.list.reduce((a, x) => a + (x.size || 0), 0), limit: ACCT_MAX, list: I.list.slice().sort((a, b) => (b.seen || 0) - (a.seen || 0)).slice(0, 300) });
+    }
+    case "/api/accounts/config": {
+      if (!owner) return fail(res, 403, "Only the owner.");
+      if (M !== "POST") break;
+      if (!rigCtl(req, a)) return ctlNo(res);
+      const b = await jsonBody(req, 2000),
+        cid = String(b.clientId || "").trim();
+      if (cid && !/^[0-9]+-[0-9a-z]+\.apps\.googleusercontent\.com$/.test(cid)) return fail(res, 400, "That doesn't look like a Google Client ID (it ends in .apps.googleusercontent.com).");
+      C.google = Object.assign({}, C.google, { clientId: cid });
+      writeJson(CONF, C);
+      pubSave();
+      return json(res, 200, { clientId: cid });
+    }
+    case "/api/accounts/del": {
+      if (!owner) return fail(res, 403, "Only the owner.");
+      if (M !== "POST") break;
+      if (!rigCtl(req, a)) return ctlNo(res);
+      const b = await jsonBody(req, 500),
+        id = String(b.id || "");
+      if (!/^[0-9a-f]{32}$/.test(id)) return fail(res, 400, "Which account?");
+      for (const f of [acctFile(id), acctFile(id, !0)]) await fsp.rm(f, { force: !0 });
+      const I = acctIndex();
+      I.list = I.list.filter((x) => x.id !== id);
+      writeJson(hubf("accounts.json"), I);
+      return json(res, 200, { ok: !0 });
     }
     case "/api/terms/accept": {
       if (M !== "POST") break;
