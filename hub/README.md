@@ -142,6 +142,14 @@ The rig downloads it into your Music or Videos, even while your devices are off.
 3. Delete the `.ollama` folder in your user folder. It holds the models, which are several GB.
 4. You can also delete the OLLAMA_ORIGINS and OLLAMA_HOST environment variables. They're no longer needed.
 
+### Testers' chat
+
+Hub 1.13 keeps a group chat on the rig for everyone with a Hub account (add the testers under
+Manage the rig → People, each with their own name and PIN). In Workbench: the menu → Testers' chat.
+Text only, one message every 3 seconds each, rude words starred out. As the owner you can remove any
+message and pause anyone's chat from the chat itself; people can remove their own. It is saved on the
+rig in `.hub/chat.json` (the last 1,000 messages). Tickets from Report a problem can be posted into it.
+
 ## Good to know
 - **Updates:** the Hub updates itself from the Workbench site. Nothing to do on the rig.
 - **Backups:**

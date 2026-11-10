@@ -17,7 +17,7 @@ const http = require("http"),
   { readTags } = require("./tags.js"),
   { __wbReminders } = require("./reminders.js");
 
-const VERSION = "1.12.0";
+const VERSION = "1.13.0";
 const HOME = process.env.WB_HUB_HOME || path.join(__dirname, "..");
 const CONF = process.env.WB_HUB_CONFIG || path.join(HOME, "hub.json");
 const APP = "https://tonystarkofficial1111-web.github.io";
@@ -276,6 +276,20 @@ function broadcast(ev, filter) {
 setInterval(() => {
   for (const c of live) c.res.write(": ping\n\n");
 }, 25000).unref();
+
+// ---- the testers' chat (1.13) -------------------------------------------------------------------
+// One group chat for everyone with a Hub account, kept on the rig (.hub/chat.json, the last 1,000
+// messages). Text only, 500 characters, one message every 3 seconds each, rude words starred out.
+// The owner can remove any message and pause anyone's chat; people can remove their own.
+const CHAT = readJson(hubf("chat.json"), { msgs: [], muted: [] });
+CHAT.msgs ||= [];
+CHAT.muted ||= [];
+let chatT = null;
+const saveChat = () => (clearTimeout(chatT), (chatT = setTimeout(() => writeJson(hubf("chat.json"), CHAT), 600)));
+const chatLast = new Map();
+const CHAT_RUDE = /\b(f+u+c+k+\w*|sh+i+t+\w*|bitch\w*|cunt\w*|n+i+g+g+\w*|fag\w*|retard\w*|whore\w*|slut\w*|pussy\w*|asshole\w*|bastard\w*)/gi;
+const chatClean = (t) => String(t || "").replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, "").replace(/\n{3,}/g, "\n\n").trim().slice(0, 500).replace(CHAT_RUDE, (w) => w[0] + "*".repeat(Math.max(2, w.length - 1)));
+const chatView = (m) => (m.del ? { id: m.id, at: m.at, uid: m.uid, name: m.name, del: !0 } : { id: m.id, at: m.at, uid: m.uid, name: m.name, owner: !!m.owner, text: m.text });
 
 // ---- Work --------------------------------------------------------------------------------------
 const workFile = () => path.join(WORK(), "work.json");
@@ -2109,6 +2123,49 @@ async function route(req, res) {
       if (!rigCtl(req, a)) return ctlNo(res);
       await inboxWatch();
       return json(res, 200, pubView(u));
+    case "/api/chat": {
+      if (M === "GET") {
+        const since = +url.searchParams.get("since") || 0,
+          list = CHAT.msgs.filter((m) => m.at > since || (m.edit || 0) > since).slice(-200);
+        return json(res, 200, { msgs: list.map(chatView), me: { id: u.id, name: u.name, owner }, muted: CHAT.muted.includes(u.id), people: owner ? U.users.map((x) => ({ id: x.id, name: x.name, muted: CHAT.muted.includes(x.id) })) : void 0, now: Date.now() });
+      }
+      if (M === "POST") {
+        if (CHAT.muted.includes(u.id)) return fail(res, 403, "The owner has paused your chat for now.");
+        const text = chatClean((await jsonBody(req, 2e4)).text);
+        if (!text) return fail(res, 400, "Write something first.");
+        const last = chatLast.get(u.id) || 0;
+        if (Date.now() - last < 3000) return fail(res, 429, "Slow down: one message every 3 seconds.");
+        chatLast.set(u.id, Date.now());
+        const m = { id: id36(), at: Date.now(), uid: u.id, name: u.name, owner, text };
+        CHAT.msgs.push(m);
+        CHAT.msgs.length > 1000 && CHAT.msgs.splice(0, CHAT.msgs.length - 1000);
+        saveChat();
+        broadcast({ type: "chat", at: m.at });
+        return json(res, 200, { msg: chatView(m) });
+      }
+      if (M === "DELETE") {
+        const m = CHAT.msgs.find((x) => x.id === url.searchParams.get("id"));
+        if (!m) return fail(res, 404, "That message is already gone.");
+        if (!owner && m.uid !== u.id) return fail(res, 403, "You can only remove your own messages.");
+        ((m.del = !0), (m.text = ""), (m.edit = Date.now()));
+        saveChat();
+        broadcast({ type: "chat", at: m.edit });
+        return json(res, 200, { ok: !0 });
+      }
+      break;
+    }
+    case "/api/chat/mute": {
+      if (!owner) return fail(res, 403, "Only the owner.");
+      if (M !== "POST") break;
+      const b = await jsonBody(req, 1e3),
+        who = U.users.find((x) => x.id === b.uid);
+      if (!who || who.role === "owner") return fail(res, 400, "Pick someone to pause.");
+      CHAT.muted = CHAT.muted.filter((x) => x !== who.id);
+      b.on && CHAT.muted.push(who.id);
+      saveChat();
+      broadcast({ type: "chat", at: Date.now() });
+      return json(res, 200, { ok: !0, muted: !!b.on });
+    }
     case "/api/me/pin": {
       const b = await jsonBody(req, 1e4);
       if (pinHash(String(b.old || ""), u.salt) !== u.hash) return fail(res, 401, "Your current PIN isn't right.");
@@ -2232,7 +2289,8 @@ async function route(req, res) {
         const b = await jsonBody(req, 100e6);
         if ((b.base || "") !== rev) return json(res, 409, text ? '{"rev":"' + rev + '","save":' + text + "}" : { rev: "", save: null });
         if (!b.save || typeof b.save.storage !== "object") return fail(res, 400, "That isn't a Workbench save.");
-        const nt = JSON.stringify(Object.assign({}, b.save, { savedAt: Date.now(), device: a.device.name }));
+        // who saved it: the Workbench on the rig itself doesn't need telling that its own save "came from the rig"
+        const nt = JSON.stringify(Object.assign({}, b.save, { savedAt: Date.now(), device: a.device.name, deviceId: a.device.id, fromRig: fromRig(req) }));
         fs.mkdirSync(path.dirname(f), { recursive: !0 });
         fs.writeFileSync(f + ".tmp", nt);
         fs.renameSync(f + ".tmp", f);
