@@ -151,7 +151,7 @@ message and pause anyone's chat from the chat itself; people can remove their ow
 rig in `.hub/chat.json` (the last 1,000 messages). Tickets from Report a problem can be posted into it.
 
 ## Good to know
-- **Updates:** the Hub updates itself from the Workbench site. Nothing to do on the rig.
+- **Updates:** the Hub updates itself from the Workbench site: it looks 30 seconds after it starts and then every hour (1.13.1), so **Restart the Hub** in the icon's menu is also "update now". The Hub has its own version number, separate from Workbench's; when a Workbench feature needs a newer Hub (the testers' chat needs 1.13), that window says which version the rig is running and the owner gets an **Update the Hub now** button.
 - **Backups:**
   - **Work data:** a copy of work.json is saved every day in the Hub folder (`.hub\backups`, the last 90 days).
   - **When the second drive arrives:** set `"backupDir": "E:\\Backups"` in `%LOCALAPPDATA%\WorkbenchHub\hub.json` to keep a copy there too.

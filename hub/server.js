@@ -17,7 +17,7 @@ const http = require("http"),
   { readTags } = require("./tags.js"),
   { __wbReminders } = require("./reminders.js");
 
-const VERSION = "1.13.0";
+const VERSION = "1.13.1";
 const HOME = process.env.WB_HUB_HOME || path.join(__dirname, "..");
 const CONF = process.env.WB_HUB_CONFIG || path.join(HOME, "hub.json");
 const APP = "https://tonystarkofficial1111-web.github.io";
@@ -724,14 +724,18 @@ const newer = (a, b) => {
   for (let i = 0; i < 3; i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0);
   return !1;
 };
-async function checkUpdate() {
-  if (!C.autoUpdate || !C.update) return;
+// (now: asked for by the owner in Workbench, so it runs even with autoUpdate off and says what happened)
+let updating = !1;
+async function checkUpdate(now) {
+  if ((!C.autoUpdate && now !== !0) || !C.update) return { ok: !1, error: "This Hub has no update address." };
+  if (updating) return { ok: !0, updating: !0, latest: UPD.latest };
+  updating = !0;
   try {
-    const r = await fetch(C.update + "version.json", { cache: "no-store", signal: AbortSignal.timeout(20000) });
-    if (!r.ok) return;
+    const r = await fetch(C.update + "version.json?" + Date.now(), { cache: "no-store", signal: AbortSignal.timeout(20000) });
+    if (!r.ok) throw new Error("The update address answered " + r.status);
     const v = await r.json();
     Object.assign(UPD, { checked: Date.now(), latest: String(v.version || ""), err: "" });
-    if (!newer(v.version, VERSION)) return;
+    if (!newer(v.version, VERSION)) return { ok: !0, updating: !1, latest: UPD.latest };
     const tmp = path.join(__dirname, ".update");
     fs.rmSync(tmp, { recursive: !0, force: !0 });
     fs.mkdirSync(tmp);
@@ -747,10 +751,14 @@ async function checkUpdate() {
     try {
       pubEvent("update", "Hub updated to " + v.version, "");
     } catch {}
-    setTimeout(() => process.exit(3), 300);
+    setTimeout(() => process.exit(3), 800);
+    return { ok: !0, updating: !0, latest: UPD.latest };
   } catch (e) {
     Object.assign(UPD, { checked: Date.now(), err: e.message });
     log("Update check:", e.message);
+    return { ok: !1, error: e.message };
+  } finally {
+    updating = !1;
   }
 }
 
@@ -2654,6 +2662,15 @@ async function route(req, res) {
       res.writeHead(200, Object.assign(h, { "Content-Type": "image/jpeg", "Content-Length": f.buf.length }));
       return res.end(f.buf);
     }
+    // fetch the newest Hub now instead of at the next check (1.13.1): the owner, from any device
+    case "/api/hub/update": {
+      if (M !== "POST") break;
+      if (!owner) return fail(res, 403, "Only the owner can update the Hub.");
+      const r = await checkUpdate(!0);
+      if (!r.ok) return fail(res, 502, "The Hub couldn't fetch its update: " + r.error);
+      r.updating && log("Update asked by", u.name, "on", a.device.name);
+      return json(res, 200, { ok: !0, version: VERSION, latest: r.latest, updating: !!r.updating });
+    }
     case "/api/hub/restart":
       if (M !== "POST") break;
       if (!rigCtl(req, a)) return ctlNo(res);
@@ -2736,12 +2753,13 @@ function main() {
   setInterval(() => checkReminders().catch((e) => log("reminders:", e.message)), 10 * 60000);
   setInterval(() => makeDigest().catch((e) => log("digest:", e.message)), 60 * 60000);
   setTimeout(() => makeDigest().catch(() => {}), 120000);
-  setTimeout(checkUpdate, 5 * 60000);
+  // soon after it starts (so "Restart the Hub" is also "update the Hub"), then every hour
+  setTimeout(checkUpdate, 30000);
   setTimeout(histSample, 45000);
   setInterval(histSample, 10 * 60000);
   setTimeout(() => inboxWatch().catch((e) => log("inbox:", e.message)), 90000);
   setInterval(() => inboxWatch().catch((e) => log("inbox:", e.message)), 10 * 60000);
-  setInterval(checkUpdate, 6 * 3600000);
+  setInterval(checkUpdate, 3600000);
 }
 if (require.main === module) main();
 module.exports = { route, setup, C, addUser, checkReminders, makeDigest, directLink, folderHint, autoKind, VERSION };
