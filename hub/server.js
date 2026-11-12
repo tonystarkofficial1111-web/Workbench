@@ -17,7 +17,7 @@ const http = require("http"),
   { readTags } = require("./tags.js"),
   { __wbReminders } = require("./reminders.js");
 
-const VERSION = "1.13.1";
+const VERSION = "1.14.0";
 const HOME = process.env.WB_HUB_HOME || path.join(__dirname, "..");
 const CONF = process.env.WB_HUB_CONFIG || path.join(HOME, "hub.json");
 const APP = "https://tonystarkofficial1111-web.github.io";
@@ -289,7 +289,112 @@ const saveChat = () => (clearTimeout(chatT), (chatT = setTimeout(() => writeJson
 const chatLast = new Map();
 const CHAT_RUDE = /\b(f+u+c+k+\w*|sh+i+t+\w*|bitch\w*|cunt\w*|n+i+g+g+\w*|fag\w*|retard\w*|whore\w*|slut\w*|pussy\w*|asshole\w*|bastard\w*)/gi;
 const chatClean = (t) => String(t || "").replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, "").replace(/\n{3,}/g, "\n\n").trim().slice(0, 500).replace(CHAT_RUDE, (w) => w[0] + "*".repeat(Math.max(2, w.length - 1)));
-const chatView = (m) => (m.del ? { id: m.id, at: m.at, uid: m.uid, name: m.name, del: !0 } : { id: m.id, at: m.at, uid: m.uid, name: m.name, owner: !!m.owner, text: m.text });
+// (1.14) a removed message is gone completely: nothing about who wrote it, only that it left
+const chatView = (m) => (m.del ? { id: m.id, at: m.at, edit: m.edit, del: !0 } : { id: m.id, at: m.at, uid: m.uid, name: m.name, owner: !!m.owner, pub: !!m.pub, text: m.text });
+// ---- 1.14.0: testers without a Hub account ------------------------------------------------------------
+// Anyone who opens the website can join the chat with a name. Their account lives in this browser (a secret
+// token; only a scrambled copy is kept here). No links, one message every 20 seconds, and the owner can pause
+// or remove anyone. To stop one person from making many accounts, the address a join comes from is kept as a
+// one-way scramble (a keyed HMAC-SHA256, the key kept in its own private file) for 24 hours only, then forgotten: two accounts per address.
+CHAT.pub ||= [];
+CHAT.ips ||= {};
+delete CHAT.salt;
+// The secret code that scrambles addresses lives only in its own file inside the Hub's private folder
+// (.hub/chat.key), never in the chat data, never sent anywhere. Without it the scrambled values can't be
+// turned back into addresses, even by someone who gets a copy of chat.json.
+let CHAT_KEY = "";
+try {
+  CHAT_KEY = fs.readFileSync(hubf("chat.key"), "utf8").trim();
+} catch {}
+if (CHAT_KEY.length < 32) {
+  CHAT_KEY = crypto.randomBytes(32).toString("hex");
+  try {
+    fs.writeFileSync(hubf("chat.key"), CHAT_KEY, { mode: 0o600 });
+  } catch (e) {
+    log("chat key:", e.message);
+  }
+}
+const CHAT_IP_MAX = 2,
+  CHAT_SLOW = 20000,
+  CHAT_LINK = /(https?:\/\/|www\.|\b[a-z0-9-]+\.(com|net|org|io|gg|co|me|ly|app|dev|xyz|tv|ru|cn|info|link|site|online|shop|store|ink|us|uk|de|fr|za)\b|\bdiscord\.|\bt\.me\b)/i;
+const chatIpOf = (req) => String(req.headers["x-forwarded-for"] || req.socket.remoteAddress || "?").split(",")[0].trim();
+// an IPv6 address is cut to its first half (the part a household shares) so changing the end doesn't dodge the limit
+const chatIpNet = (ip) => (ip.includes(":") && !ip.includes(".") ? ip.split(":").slice(0, 4).join(":") : ip.replace(/^::ffff:/, ""));
+const chatIpHash = (req) => crypto.createHmac("sha256", CHAT_KEY).update(chatIpNet(chatIpOf(req))).digest("hex").slice(0, 32);
+function chatIpPrune() {
+  const cut = Date.now() - 864e5;
+  for (const k of Object.keys(CHAT.ips)) {
+    CHAT.ips[k] = CHAT.ips[k].filter((t) => t > cut);
+    CHAT.ips[k].length || delete CHAT.ips[k];
+  }
+}
+const chatTomb = () => {
+  const cut = Date.now() - 864e5;
+  CHAT.msgs = CHAT.msgs.filter((m) => !m.del || (m.edit || 0) > cut);
+};
+const chatJoinHits = [];
+async function chatPubRoute(req, res, act) {
+  const b = await jsonBody(req, 4000),
+    now = Date.now();
+  if (act === "join") {
+    chatIpPrune();
+    while (chatJoinHits.length && now - chatJoinHits[0] > 36e5) chatJoinHits.shift();
+    if (chatJoinHits.length >= 40 || CHAT.pub.length >= 3000) return fail(res, 429, "The chat can't take new people right now. Try again later.");
+    const name = String(b.name || "").replace(/\s+/g, " ").trim();
+    if (!/^[A-Za-z0-9][A-Za-z0-9 _-]{1,19}$/.test(name)) return fail(res, 400, "Pick a name of 2 to 20 letters, numbers, spaces, - or _.");
+    if (chatClean(name) !== name || CHAT_LINK.test(name)) return fail(res, 400, "Pick a different name.");
+    const low = name.toLowerCase();
+    if (CHAT.pub.some((a) => a.name.toLowerCase() === low) || U.users.some((x) => String(x.name || "").toLowerCase() === low)) return fail(res, 409, "That name is taken. Pick another.");
+    const ih = chatIpHash(req);
+    if ((CHAT.ips[ih] || []).length >= CHAT_IP_MAX) return fail(res, 429, "Two accounts have already been made from this connection today. Use one of them, or try again tomorrow.");
+    const token = crypto.randomBytes(24).toString("base64url"),
+      a = { id: id36(), name, th: sha(token), at: now, muted: !1 };
+    CHAT.pub.push(a);
+    (CHAT.ips[ih] ||= []).push(now);
+    chatJoinHits.push(now);
+    saveChat();
+    log("Chat: new tester", name);
+    return json(res, 200, { id: a.id, token, name });
+  }
+  const a = CHAT.pub.find((x) => x.id === String(b.id || ""));
+  if (!a || a.th !== sha(String(b.t || ""))) return fail(res, 401, "This browser isn't signed in to the chat any more. Join again.");
+  const uid = "p_" + a.id;
+  if (act === "list") {
+    if (now - (a.listAt || 0) < 1500) return fail(res, 429, "Slow down.");
+    a.listAt = now;
+    const since = +b.since || 0,
+      list = CHAT.msgs.filter((m) => m.at > since || (m.edit || 0) > since).slice(-200);
+    return json(res, 200, { msgs: list.map(chatView), me: { id: uid, name: a.name }, muted: !!a.muted, now });
+  }
+  if (act === "send") {
+    if (a.muted) return fail(res, 403, "The owner has paused your chat for now.");
+    const text = chatClean(b.text);
+    if (!text) return fail(res, 400, "Write something first.");
+    if (CHAT_LINK.test(text)) return fail(res, 400, "Links aren't allowed in the chat.");
+    const left = Math.ceil((CHAT_SLOW - (now - (chatLast.get(uid) || 0))) / 1000);
+    if (left > 0) return fail(res, 429, "One message every 20 seconds. Wait " + left + " more.");
+    if (a.lastText === text && now - (a.lastAt || 0) < 3e5) return fail(res, 400, "You just said that.");
+    chatLast.set(uid, now);
+    a.lastText = text;
+    a.lastAt = now;
+    const m = { id: id36(), at: now, uid, name: a.name, pub: !0, text };
+    CHAT.msgs.push(m);
+    chatTomb();
+    CHAT.msgs.length > 1000 && CHAT.msgs.splice(0, CHAT.msgs.length - 1000);
+    saveChat();
+    broadcast({ type: "chat", at: m.at });
+    return json(res, 200, { msg: chatView(m) });
+  }
+  if (act === "del") {
+    const m = CHAT.msgs.find((x) => x.id === String(b.msg || ""));
+    if (!m || m.uid !== uid) return fail(res, 404, "That message is already gone.");
+    ((m.del = !0), (m.text = ""), (m.name = ""), (m.uid = ""), (m.edit = now));
+    saveChat();
+    broadcast({ type: "chat", at: m.edit });
+    return json(res, 200, { ok: !0 });
+  }
+  return fail(res, 404, "Not here.");
+}
 
 // ---- Work --------------------------------------------------------------------------------------
 const workFile = () => path.join(WORK(), "work.json");
@@ -1624,6 +1729,7 @@ async function inboxRoute(req, res) {
   }
   if (req.method === "POST" && url.pathname === "/pair") return json(res, 200, pairUse(req, await jsonBody(req, 2000)));
   if (req.method === "POST" && /^\/acct\/(google|load|save|delete)$/.test(url.pathname)) return acctRoute(req, res, url.pathname.slice(6));
+  if (req.method === "POST" && /^\/chat\/(join|list|send|del)$/.test(url.pathname)) return chatPubRoute(req, res, url.pathname.slice(6));
   if (req.method !== "POST" || !["/apply", "/message", "/form"].includes(url.pathname)) return fail(res, 404, "Not here.");
   const b = await jsonBody(req, 2.2e6),
     S = pubLoad();
@@ -2135,14 +2241,16 @@ async function route(req, res) {
       if (M === "GET") {
         const since = +url.searchParams.get("since") || 0,
           list = CHAT.msgs.filter((m) => m.at > since || (m.edit || 0) > since).slice(-200);
-        return json(res, 200, { msgs: list.map(chatView), me: { id: u.id, name: u.name, owner }, muted: CHAT.muted.includes(u.id), people: owner ? U.users.map((x) => ({ id: x.id, name: x.name, muted: CHAT.muted.includes(x.id) })) : void 0, now: Date.now() });
+        return json(res, 200, { msgs: list.map(chatView), me: { id: u.id, name: u.name, owner }, muted: CHAT.muted.includes(u.id), people: owner ? U.users.map((x) => ({ id: x.id, name: x.name, muted: CHAT.muted.includes(x.id) })).concat(CHAT.pub.map((a) => ({ id: "p_" + a.id, name: a.name, muted: !!a.muted, pub: !0 }))) : void 0, now: Date.now() });
       }
       if (M === "POST") {
         if (CHAT.muted.includes(u.id)) return fail(res, 403, "The owner has paused your chat for now.");
         const text = chatClean((await jsonBody(req, 2e4)).text);
         if (!text) return fail(res, 400, "Write something first.");
-        const last = chatLast.get(u.id) || 0;
-        if (Date.now() - last < 3000) return fail(res, 429, "Slow down: one message every 3 seconds.");
+        if (!owner && CHAT_LINK.test(text)) return fail(res, 400, "Links aren't allowed in the chat.");
+        const last = chatLast.get(u.id) || 0,
+          wait = owner ? 3000 : CHAT_SLOW;
+        if (Date.now() - last < wait) return fail(res, 429, "Slow down: one message every " + wait / 1000 + " seconds.");
         chatLast.set(u.id, Date.now());
         const m = { id: id36(), at: Date.now(), uid: u.id, name: u.name, owner, text };
         CHAT.msgs.push(m);
@@ -2155,7 +2263,7 @@ async function route(req, res) {
         const m = CHAT.msgs.find((x) => x.id === url.searchParams.get("id"));
         if (!m) return fail(res, 404, "That message is already gone.");
         if (!owner && m.uid !== u.id) return fail(res, 403, "You can only remove your own messages.");
-        ((m.del = !0), (m.text = ""), (m.edit = Date.now()));
+        ((m.del = !0), (m.text = ""), (m.name = ""), (m.uid = ""), (m.edit = Date.now()));
         saveChat();
         broadcast({ type: "chat", at: m.edit });
         return json(res, 200, { ok: !0 });
@@ -2166,13 +2274,33 @@ async function route(req, res) {
       if (!owner) return fail(res, 403, "Only the owner.");
       if (M !== "POST") break;
       const b = await jsonBody(req, 1e3),
-        who = U.users.find((x) => x.id === b.uid);
+        pa = typeof b.uid === "string" && b.uid.startsWith("p_") ? CHAT.pub.find((x) => "p_" + x.id === b.uid) : null;
+      if (pa) {
+        pa.muted = !!b.on;
+        saveChat();
+        broadcast({ type: "chat", at: Date.now() });
+        return json(res, 200, { ok: !0, muted: pa.muted });
+      }
+      const who = U.users.find((x) => x.id === b.uid);
       if (!who || who.role === "owner") return fail(res, 400, "Pick someone to pause.");
       CHAT.muted = CHAT.muted.filter((x) => x !== who.id);
       b.on && CHAT.muted.push(who.id);
       saveChat();
       broadcast({ type: "chat", at: Date.now() });
       return json(res, 200, { ok: !0, muted: !!b.on });
+    }
+    case "/api/chat/remove": {
+      // (1.14) the owner removes a public tester: the account, and everything they wrote
+      if (!owner) return fail(res, 403, "Only the owner.");
+      if (M !== "POST") break;
+      const b = await jsonBody(req, 1e3),
+        i = CHAT.pub.findIndex((x) => "p_" + x.id === b.uid);
+      if (i < 0) return fail(res, 404, "That person is already gone.");
+      for (const m of CHAT.msgs) m.uid === b.uid && ((m.del = !0), (m.text = ""), (m.name = ""), (m.uid = ""), (m.edit = Date.now()));
+      CHAT.pub.splice(i, 1);
+      saveChat();
+      broadcast({ type: "chat", at: Date.now() });
+      return json(res, 200, { ok: !0 });
     }
     case "/api/me/pin": {
       const b = await jsonBody(req, 1e4);
