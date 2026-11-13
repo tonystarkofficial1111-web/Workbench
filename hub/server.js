@@ -12,12 +12,13 @@ const http = require("http"),
   fsp = fs.promises,
   path = require("path"),
   crypto = require("crypto"),
+  zlib = require("zlib"),
   os = require("os"),
   push = require("./push.js"),
   { readTags } = require("./tags.js"),
   { __wbReminders } = require("./reminders.js");
 
-const VERSION = "1.15.0";
+const VERSION = "1.16.0";
 const HOME = process.env.WB_HUB_HOME || path.join(__dirname, "..");
 const CONF = process.env.WB_HUB_CONFIG || path.join(HOME, "hub.json");
 const APP = "https://tonystarkofficial1111-web.github.io";
@@ -1439,7 +1440,29 @@ async function inboxWatch() {
 // notes, never Block World worlds (those stay on their device). One file per person, 5 MB at most, plus the
 // version before the last save. People are known by Google's permanent id, not their email.
 const GCERTS = process.env.WB_GOOGLE_CERTS || "https://www.googleapis.com/oauth2/v3/certs";
-const ACCT_MAX = 5e6;
+const ACCT_MAX = 5e6; // the most a request may carry; what one person may keep is set below
+// (1.16.0) storage stays small on purpose: saves are compressed on disk, one person keeps 1 MB by default (the owner
+// can change it, up to 5 MB), and all accounts together stop at a total the owner sets (5 GB by default). When the
+// total is reached people still sign in; their progress just stays on their own device until there is room.
+const acctMaxEach = () => Math.max(50e3, Math.min(ACCT_MAX, +(C.google && C.google.maxEach) || 1e6));
+const acctMaxTotal = () => Math.max(50e6, +(C.google && C.google.maxTotal) || 5e9);
+const acctUsed = () => acctIndex().list.reduce((a, x) => a + (x.disk || x.size || 0) + (x.prevDisk || 0), 0);
+function acctRead(f, dflt) {
+  try {
+    const b = fs.readFileSync(f);
+    return JSON.parse((b[0] === 0x1f && b[1] === 0x8b ? zlib.gunzipSync(b) : b).toString("utf8"));
+  } catch {
+    return dflt;
+  }
+}
+function acctWrite(f, o) {
+  const z = zlib.gzipSync(Buffer.from(JSON.stringify(o), "utf8"), { level: 9 });
+  fs.mkdirSync(path.dirname(f), { recursive: !0 });
+  fs.writeFileSync(f, z);
+  return z.length;
+}
+let acctWarnAt = 0,
+  acctFullAt = 0;
 let gKeys = { at: 0, keys: [] };
 async function googleKeys(force) {
   if (!force && Date.now() - gKeys.at < 3600000 && gKeys.keys.length) return gKeys.keys;
@@ -1480,7 +1503,14 @@ async function googleVerify(tok) {
 }
 const acctId = (sub) => sha("google:" + sub).slice(0, 32);
 const acctFile = (id, prev) => path.join(hubf("accounts"), id + (prev ? ".prev" : "") + ".json");
-const acctIndex = () => readJson(hubf("accounts.json"), { list: [] });
+// (1.16.0) the list of accounts is kept in memory and written to disk a moment after a change, so thousands of
+// people saving does not mean reading and writing the whole list each time
+let ACCT_I = null,
+  acctIT = null;
+const acctIndex = () => (ACCT_I ||= readJson(hubf("accounts.json"), { list: [] }));
+const acctIdxFlush = () => (clearTimeout(acctIT), (acctIT = null), ACCT_I && writeJson(hubf("accounts.json"), ACCT_I));
+const acctIdxSave = () => acctIT || (acctIT = setTimeout(acctIdxFlush, 2500));
+process.on("exit", () => acctIT && acctIdxFlush());
 function acctKey() {
   if (!C.acctKey) ((C.acctKey = crypto.randomBytes(32).toString("hex")), writeJson(CONF, C));
   return C.acctKey;
@@ -1500,14 +1530,14 @@ function acctCheck(t) {
 }
 function acctIndexPut(A) {
   const I = acctIndex(),
-    e = { id: A.id, email: A.email, name: A.name, created: A.created, seen: A.seen, size: A.size || 0 },
+    e = { id: A.id, email: A.email, name: A.name, created: A.created, seen: A.seen, size: A.size || 0, disk: A.disk || 0, prevDisk: A.prevDisk || 0 },
     i = I.list.findIndex((x) => x.id === A.id);
   i < 0 ? I.list.push(e) : (I.list[i] = e);
-  writeJson(hubf("accounts.json"), I);
+  acctIdxSave();
 }
 // Block World worlds never come here, even if a device sends them
 const acctClean = (st) => Object.fromEntries(Object.entries(st || {}).filter(([k, v]) => typeof v === "string" && /^(wb[-_]|stark_)/.test(k) && !/world|^wb-bw/i.test(k)));
-const acctView = (A) => ({ account: { email: A.email, name: A.name, created: A.created }, rev: A.rev || "", save: A.save || null, size: A.size || 0, limit: ACCT_MAX });
+const acctView = (A) => ({ account: { email: A.email, name: A.name, created: A.created }, rev: A.rev || "", save: A.save || null, size: A.size || 0, limit: acctMaxEach() });
 const acctHits = new Map();
 function acctLimit(req, n) {
   const ip = String(req.headers["x-forwarded-for"] || req.socket.remoteAddress || "?").split(",")[0].trim() + "|" + n,
@@ -1525,10 +1555,10 @@ async function acctRoute(req, res, what) {
       g = await googleVerify(b.credential),
       id = acctId(g.sub);
     fs.mkdirSync(hubf("accounts"), { recursive: !0 });
-    const A = readJson(acctFile(id), null) || { id, sub: g.sub, created: Date.now(), rev: "", save: null, size: 0 };
+    const A = acctRead(acctFile(id), null) || { id, sub: g.sub, created: Date.now(), rev: "", save: null, size: 0 };
     const isNew = !A.seen;
     Object.assign(A, { email: g.email, name: g.name, seen: Date.now() });
-    writeJson(acctFile(id), A);
+    A.disk = acctWrite(acctFile(id), A);
     acctIndexPut(A);
     isNew && pubEvent("note", "A new Workbench account", (g.name || "Someone") + " signed in with Google for the first time.");
     return json(res, 200, Object.assign({ token: acctTok(id) }, acctView(A)));
@@ -1537,26 +1567,37 @@ async function acctRoute(req, res, what) {
   const b = await jsonBody(req, ACCT_MAX * 1.3),
     id = acctCheck(b.token);
   if (!id) return fail(res, 401, "Sign in with Google again.");
-  const A = readJson(acctFile(id), null);
+  const A = acctRead(acctFile(id), null);
   if (!A) return fail(res, 401, "Sign in with Google again.");
-  if (what === "load") return ((A.seen = Date.now()), writeJson(acctFile(id), A), json(res, 200, acctView(A)));
+  if (what === "load") return ((A.seen = Date.now()), (A.disk = acctWrite(acctFile(id), A)), json(res, 200, acctView(A)));
   if (what === "save") {
     if ((b.base || "") !== (A.rev || "")) return json(res, 409, acctView(A));
     if (!b.save || typeof b.save.storage !== "object") return fail(res, 400, "That isn't Workbench progress.");
     const storage = acctClean(b.save.storage),
       text = JSON.stringify(storage);
-    if (text.length > ACCT_MAX) return fail(res, 413, "Your progress is bigger than 5 MB, so it can't be kept on the account. It stays on this device.");
-    A.save && writeJson(acctFile(id, !0), { at: A.saved || 0, storage: A.save.storage });
+    const each = acctMaxEach();
+    if (text.length > each) return fail(res, 413, "Your progress is bigger than " + (each >= 1e6 ? Math.round(each / 1e5) / 10 + " MB" : Math.round(each / 1e3) + " KB") + ", so it can't be kept on the account. It stays on this device.");
+    // the total: the room this person already has is theirs to reuse; a save that would not fit is kept on the device
+    const mine = (A.disk || 0) + (A.prevDisk || 0),
+      est = zlib.gzipSync(Buffer.from(text, "utf8")).length + 400,
+      total = acctUsed() - mine + est * 2;
+    if (total > acctMaxTotal()) {
+      if (Date.now() - acctFullAt > 36e5) ((acctFullAt = Date.now()), pubEvent("note", "Account storage is full", "The accounts have reached the storage limit you set. People can still sign in; their progress stays on their own device. Raise the limit on the Rig tab (Web page, Google sign-in and accounts) when you have room."));
+      return fail(res, 413, "Account storage is full right now, so your progress stays on this device for the moment.");
+    }
+    A.prevDisk = 0;
+    if (A.save) A.prevDisk = acctWrite(acctFile(id, !0), { at: A.saved || 0, storage: A.save.storage });
     Object.assign(A, { save: { storage }, size: text.length, saved: Date.now(), seen: Date.now(), rev: sha(text + "|" + Date.now()).slice(0, 16) });
-    writeJson(acctFile(id), A);
+    A.disk = acctWrite(acctFile(id), A);
     acctIndexPut(A);
-    return json(res, 200, { rev: A.rev, size: A.size, limit: ACCT_MAX });
+    if (acctUsed() > acctMaxTotal() * 0.8 && Date.now() - acctWarnAt > 864e5) ((acctWarnAt = Date.now()), pubEvent("note", "Account storage is 80% full", "The accounts use over 80% of the storage limit you set. Raise the limit on the Rig tab, or let the oldest unused accounts go."));
+    return json(res, 200, { rev: A.rev, size: A.size, limit: each });
   }
   if (what === "delete") {
     for (const f of [acctFile(id), acctFile(id, !0)]) await fsp.rm(f, { force: !0 });
     const I = acctIndex();
     I.list = I.list.filter((x) => x.id !== id);
-    writeJson(hubf("accounts.json"), I);
+    acctIdxSave();
     return json(res, 200, { ok: !0 });
   }
   return fail(res, 404, "Not here.");
@@ -2692,7 +2733,7 @@ async function route(req, res) {
     case "/api/accounts": {
       if (!owner) return fail(res, 403, "Only the owner.");
       const I = acctIndex();
-      return json(res, 200, { clientId: (C.google && C.google.clientId) || "", count: I.list.length, bytes: I.list.reduce((a, x) => a + (x.size || 0), 0), limit: ACCT_MAX, list: I.list.slice().sort((a, b) => (b.seen || 0) - (a.seen || 0)).slice(0, 300) });
+      return json(res, 200, { clientId: (C.google && C.google.clientId) || "", count: I.list.length, bytes: acctUsed(), limit: acctMaxEach(), maxEach: acctMaxEach(), maxTotal: acctMaxTotal(), list: I.list.slice().sort((a, b) => (b.seen || 0) - (a.seen || 0)).slice(0, 300) });
     }
     case "/api/accounts/config": {
       if (!owner) return fail(res, 403, "Only the owner.");
@@ -2701,10 +2742,13 @@ async function route(req, res) {
       const b = await jsonBody(req, 2000),
         cid = String(b.clientId || "").trim();
       if (cid && !/^[0-9]+-[0-9a-z]+\.apps\.googleusercontent\.com$/.test(cid)) return fail(res, 400, "That doesn't look like a Google Client ID (it ends in .apps.googleusercontent.com).");
-      C.google = Object.assign({}, C.google, { clientId: cid });
+      const g = { clientId: cid };
+      if (b.maxEachKB !== undefined) g.maxEach = Math.max(50, Math.min(5000, Math.round(+b.maxEachKB) || 1000)) * 1000;
+      if (b.maxTotalMB !== undefined) g.maxTotal = Math.max(50, Math.min(5e6, Math.round(+b.maxTotalMB) || 5000)) * 1e6;
+      C.google = Object.assign({}, C.google, g);
       writeJson(CONF, C);
       pubSave();
-      return json(res, 200, { clientId: cid });
+      return json(res, 200, { clientId: cid, maxEach: acctMaxEach(), maxTotal: acctMaxTotal() });
     }
     case "/api/accounts/del": {
       if (!owner) return fail(res, 403, "Only the owner.");
@@ -2716,7 +2760,7 @@ async function route(req, res) {
       for (const f of [acctFile(id), acctFile(id, !0)]) await fsp.rm(f, { force: !0 });
       const I = acctIndex();
       I.list = I.list.filter((x) => x.id !== id);
-      writeJson(hubf("accounts.json"), I);
+      acctIdxSave();
       return json(res, 200, { ok: !0 });
     }
     case "/api/terms/accept": {
