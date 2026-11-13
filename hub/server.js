@@ -18,7 +18,7 @@ const http = require("http"),
   { readTags } = require("./tags.js"),
   { __wbReminders } = require("./reminders.js");
 
-const VERSION = "1.16.0";
+const VERSION = "1.17.0";
 const HOME = process.env.WB_HUB_HOME || path.join(__dirname, "..");
 const CONF = process.env.WB_HUB_CONFIG || path.join(HOME, "hub.json");
 const APP = "https://tonystarkofficial1111-web.github.io";
@@ -1620,7 +1620,8 @@ function trfHit(kind, slug) {
   const T = trfLoad(),
     d = (T.days[dayKey()] = T.days[dayKey()] || { open: 0, ref: {}, form: {}, co: {}, sent: {}, msg: {}, stamp: {}, trail: {} });
   if (kind === "open") d.open++;
-  else if (["ref", "form", "co", "sent", "msg", "stamp", "trail"].includes(kind) && /^[a-z0-9-]{1,60}$/.test(slug)) {
+  // (1.17.0) also: which game was opened, clips saved, sign-ins and shares: anonymous counts, the kind and the name only
+  else if (["ref", "form", "co", "sent", "msg", "stamp", "trail", "play", "clip", "signin", "share"].includes(kind) && /^[a-z0-9-]{1,60}$/.test(slug)) {
     const m = d[kind] || (d[kind] = {});
     if (Object.keys(m).length < 300 || m[slug]) m[slug] = (m[slug] || 0) + 1;
   } else return;
