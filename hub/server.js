@@ -17,7 +17,7 @@ const http = require("http"),
   { readTags } = require("./tags.js"),
   { __wbReminders } = require("./reminders.js");
 
-const VERSION = "1.14.0";
+const VERSION = "1.15.0";
 const HOME = process.env.WB_HUB_HOME || path.join(__dirname, "..");
 const CONF = process.env.WB_HUB_CONFIG || path.join(HOME, "hub.json");
 const APP = "https://tonystarkofficial1111-web.github.io";
@@ -1102,6 +1102,13 @@ function pubLoad() {
         if (before && f.open && (f.u || 0) <= pb.at) pb.formU[f.id] = f.u || f.at || 1;
         else if (!before) f.open = !1;
     }
+    // 1.15.0: the company sign-up also asks about a promotion budget (for forms made before this version)
+    for (const f of P.forms)
+      if (f.kind === "company" && !f.fields.some((q) => q.map === "budget")) {
+        const i = f.fields.findIndex((q) => q.map === "contact");
+        f.fields.splice(i < 0 ? f.fields.length : i, 0, { id: id36().slice(-8) + Math.floor(Math.random() * 1e4), type: "select", label: BUDGET_Q.label, req: !1, map: "budget", help: BUDGET_Q.help, opts: BUDGET_Q.opts.slice() });
+        f.u = Date.now();
+      }
     writeJson(hubf("public.json"), P);
   }
   return P;
@@ -1760,7 +1767,8 @@ async function inboxRoute(req, res) {
     const who = (r.items.find((x) => x.map === "name") || r.items.find((x) => x.type === "short" && x.value) || {}).value || "Someone";
     log("Form:", f.title, "·", who);
     trfHit("sent", f.slug);
-    pubNotify(f.kind === "company" ? "New company sign-up" : f.kind === "artist" ? "New artist sign-up" : "New answer: " + f.title, String(who), "form", r.id, f.kind === "company" ? [["approve", "Approve"], ["decline", "Turn down"]] : [["done", "Done"]]);
+    const bud = (r.items.find((x) => x.map === "budget") || {}).value;
+    pubNotify(f.kind === "company" ? "New company sign-up" : f.kind === "artist" ? "New artist sign-up" : "New answer: " + f.title, String(who) + (bud && !/^Basic/.test(bud) ? " · promotion budget: " + bud : ""), "form", r.id, f.kind === "company" ? [["approve", "Approve"], ["decline", "Turn down"]] : [["done", "Done"]]);
     return json(res, 200, { ok: !0 });
   }
   if (S.msgs.length >= 1000) return fail(res, 503, "Messages are full right now. Try again later.");
@@ -1789,8 +1797,9 @@ function pubView(u) {
 // on the website, the answers come through the inbox, and the owner reads them on the Rig tab's
 // front page. A company sign-up that's approved becomes its Discover page by itself.
 const FTYPES = ["short", "long", "choice", "checks", "select", "email", "phone", "date", "number", "link", "image"];
-const FMAPS = ["name", "category", "city", "address", "phone", "email", "website", "instagram", "tiktok", "facebook", "youtube", "whatsapp", "description", "deal", "code", "logo", "contact"];
+const FMAPS = ["name", "category", "city", "address", "phone", "email", "website", "instagram", "tiktok", "facebook", "youtube", "whatsapp", "description", "deal", "code", "logo", "contact", "budget"];
 const fld = (type, label, req, map, help, opts) => ({ id: id36().slice(-8) + Math.floor(Math.random() * 1e4), type, label, req: !!req, map: map || "", help: help || "", opts: opts || [] });
+const BUDGET_Q = { label: "Your budget for promotion (optional, not shown)", help: "Free listing is always fine. Tap the i for what promotion means.", opts: ["Basic free listing only", "Under $50", "$50 to $200", "$200 or more", "Not sure yet, let's talk"] };
 function formDefaults() {
   return [
     {
@@ -1814,6 +1823,7 @@ function formDefaults() {
         fld("long", "About your company", 0, "description"),
         fld("short", "A deal for people from Workbench (optional)", 0, "deal", "10% off your first order"),
         fld("image", "Logo", 0, "logo"),
+        fld("select", BUDGET_Q.label, 0, "budget", BUDGET_Q.help, BUDGET_Q.opts),
         fld("short", "How we reach you (not shown)", 1, "contact", "Phone or email"),
       ],
     },
