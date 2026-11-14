@@ -18,7 +18,7 @@ const http = require("http"),
   { readTags } = require("./tags.js"),
   { __wbReminders } = require("./reminders.js");
 
-const VERSION = "1.17.0";
+const VERSION = "1.18.0";
 const HOME = process.env.WB_HUB_HOME || path.join(__dirname, "..");
 const CONF = process.env.WB_HUB_CONFIG || path.join(HOME, "hub.json");
 const APP = "https://tonystarkofficial1111-web.github.io";
@@ -1767,6 +1767,8 @@ async function inboxRoute(req, res) {
     o = req.headers.origin && allowOrigin(req.headers.origin),
     RD = /^\/k\/(wbk_[A-Za-z0-9_-]{20,80})(\/.*)?$/.exec(url.pathname);
   if (RD) return remoteDoor(req, res, RD[1], RD[2] || "/", url);
+  const GD = /^\/g\/(wbg_[A-Za-z0-9_-]{20,80})(\/.*)?$/.exec(url.pathname);
+  if (GD) return guestDoor(req, res, GD[1], GD[2] || "/", url);
   res.setHeader("Vary", "Origin");
   if (o) (res.setHeader("Access-Control-Allow-Origin", o), res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS"), res.setHeader("Access-Control-Allow-Headers", "Content-Type"));
   if (req.method === "OPTIONS") return (res.writeHead(204), res.end());
@@ -2040,6 +2042,7 @@ try {
       L.visits.unshift({ at: Date.now(), who: u.name, host });
       L.visits.length = Math.min(L.visits.length, 300);
       writeJson(hubf("browser-log.json"), L);
+      brCount(host, u);
     },
     onStop: (u, why) => {
       try {
@@ -2057,6 +2060,117 @@ try {
   log("The rig's browser isn't available:", e.message);
 }
 const brOn = () => !!(C.browser && C.browser.on);
+// ---- the rig browser's numbers (1.18.0): sites opened and people, per day, for 30 days (names of sites only)
+const brDay = (t) => new Date(t || Date.now()).toISOString().slice(0, 10);
+function brCount(host, u) {
+  try {
+    const S = readJson(hubf("browser-stats.json"), { days: {} }),
+      k = brDay(),
+      d = (S.days[k] = S.days[k] || { sites: 0, people: [], hosts: [] });
+    d.sites++;
+    !d.people.includes(u.name) && d.people.length < 200 && d.people.push(u.name);
+    host && !d.hosts.includes(host) && d.hosts.length < 500 && d.hosts.push(host);
+    for (const x of Object.keys(S.days).sort().slice(0, -30)) delete S.days[x];
+    writeJson(hubf("browser-stats.json"), S);
+  } catch {}
+}
+function brStats() {
+  const S = readJson(hubf("browser-stats.json"), { days: {} }),
+    keys = Object.keys(S.days).sort(),
+    week = keys.slice(-7),
+    today = S.days[brDay()] || { sites: 0, people: [] },
+    ppl = new Set(),
+    act = BRW && BRW.active && BRW.active();
+  week.forEach((k) => S.days[k].people.forEach((n) => ppl.add(n)));
+  const days = [];
+  for (let i = 6; i >= 0; i--) days.push((S.days[brDay(Date.now() - i * 864e5)] || { sites: 0 }).sites);
+  const G = guestLoad().guests;
+  return { on: brOn(), module: !!BRW, usingNow: act ? act.user.name : "", sitesToday: today.sites, peopleToday: today.people.length, sitesWeek: days.reduce((a, b) => a + b, 0), peopleWeek: ppl.size, days, guests: G.filter((g) => !g.revoked && g.exp > Date.now()).length };
+}
+// ---- guest codes (1.18.0): someone with no Hub account gets the rig's browser and nothing else.
+// The owner makes a code on the rig. It holds the public Funnel address and a secret key, scrambled into one
+// string (never the rig's own address). It works only together with the person's Google sign-in on Workbench,
+// binds to the first account that uses it, runs out after some days, and can be revoked at any moment.
+let GST = null;
+const guestLoad = () => (GST = GST || readJson(hubf("guests.json"), { guests: [] })),
+  guestSave = () => writeJson(hubf("guests.json"), GST);
+const GSESS = new Map(),
+  guestBad = new Map();
+function guestNew(b) {
+  const base = C.inbox && C.inboxUrl ? C.inboxUrl : "";
+  if (!base) throw Object.assign(new Error("Switch on “Use from anywhere” first: the code carries that public address."), { code: 409 });
+  const days = Math.max(1, Math.min(60, Math.round(+b.days || 7))),
+    key = "wbg_" + crypto.randomBytes(24).toString("base64url"),
+    g = { id: id36(), name: clip(b.name, 40) || "Guest", kh: sha(key), at: Date.now(), exp: Date.now() + days * 864e5, last: 0, uses: 0, acct: "", acctName: "", ack: 0, revoked: 0 };
+  guestLoad().guests.unshift(g);
+  GST.guests.length = Math.min(GST.guests.length, 100);
+  guestSave();
+  log("Guest code made for", g.name);
+  return { code: "WBG1-" + Buffer.from(JSON.stringify({ b: base, k: key })).toString("base64url"), guest: guestView(g) };
+}
+const guestView = (g) => ({ id: g.id, name: g.name, at: g.at, exp: g.exp, last: g.last, uses: g.uses, who: g.acctName || "", bound: !!g.acct, revoked: !!g.revoked, live: !g.revoked && g.exp > Date.now() });
+async function guestDoor(req, res, key, rest, url) {
+  cors(req, res);
+  if (req.method === "OPTIONS") return (res.writeHead(204), res.end());
+  const ip = String(req.headers["x-forwarded-for"] || req.socket.remoteAddress || "?").split(",")[0].trim(),
+    now = Date.now(),
+    bad = (guestBad.get(ip) || []).filter((t) => now - t < 3600000),
+    kh = sha(key),
+    g = guestLoad().guests.find((x) => safeEq(x.kh, kh));
+  if (bad.length >= 20) return fail(res, 429, "Too many wrong codes. Try again in an hour.");
+  if (!g || g.revoked || g.exp < now) return (!g && (bad.push(now), guestBad.set(ip, bad)), fail(res, 404, "That code isn't valid any more. Ask the owner for a new one."));
+  if (rest === "/join") {
+    if (req.method !== "POST") return fail(res, 405, "Not here.");
+    const b = await jsonBody(req, 4000),
+      id = acctCheck(b.token);
+    if (!id) return fail(res, 401, "Sign in with Google on Workbench first, then use the code.");
+    if (g.acct && g.acct !== id) return fail(res, 403, "This code is already linked to another account.");
+    const A = acctRead(acctFile(id), null) || {};
+    if (!g.acct) ((g.acct = id), (g.acctName = clip(A.name || A.email || "Guest", 60)), log("Guest code linked to", g.acctName));
+    g.last = now;
+    guestSave();
+    const tok = crypto.randomBytes(32).toString("base64url");
+    for (const [k, v] of GSESS) v.exp < now && GSESS.delete(k);
+    GSESS.set(sha(tok), { gid: g.id, exp: Math.min(g.exp, now + 12 * 3600000) });
+    try {
+      pubEvent("browser", g.acctName + " joined with a guest code", "“" + g.name + "”: the rig's browser only");
+    } catch {}
+    return json(res, 200, { gtoken: tok, name: g.acctName, label: g.name, exp: g.exp });
+  }
+  const h = String(req.headers.authorization || ""),
+    S = GSESS.get(sha(h.startsWith("Bearer ") ? h.slice(7).trim() : ""));
+  if (!S || S.gid !== g.id || S.exp < now) return fail(res, 401, "Use the code again to reconnect.");
+  const u = { id: "g:" + g.id, name: g.acctName + " (guest)", role: "guest", browser: !0, brAck: g.ack },
+    M = req.method,
+    P = rest.replace(/^\/browser/, "");
+  const st = () => Object.assign(BRW ? BRW.state(u) : { available: !1, active: null }, { ack: !!g.ack, on: brOn(), can: !0, allowed: brOn(), module: !!BRW });
+  if (P === "/state") return json(res, 200, st());
+  if (P === "/ack" && M === "POST") return ((g.ack = now), guestSave(), json(res, 200, st()));
+  if (P === "/stop" && M === "POST") return (BRW && BRW.active() && BRW.active().user.id === u.id && BRW.stop("Closed."), json(res, 200, st()));
+  if (!BRW || !brOn()) return fail(res, 403, "The rig's browser isn't available.");
+  if (P === "/start" && M === "POST") {
+    if (!g.ack) return fail(res, 409, "Read the notice about the rig's browser first.");
+    g.last = now;
+    g.uses++;
+    guestSave();
+    return json(res, 200, await BRW.start(u, C.browser));
+  }
+  if (["/go", "/input", "/resize"].includes(P) && M === "POST") {
+    const b = await jsonBody(req, 20000);
+    if (P === "/go") await BRW.go(u, b.url);
+    else if (P === "/input") await BRW.input(u, b.events);
+    else await BRW.resize(u, b.w, b.h);
+    return json(res, 200, { ok: !0 });
+  }
+  if (P === "/frame") {
+    const f = await BRW.frame(u, +url.searchParams.get("n") || 0, 20000),
+      hd = { "Cache-Control": "no-store", "X-Frame": String(f.n), "X-Url": encodeURIComponent(f.url), "X-Title": encodeURIComponent(f.title), "X-Size": f.w + "x" + f.h, "Access-Control-Expose-Headers": "X-Frame, X-Url, X-Title, X-Size" };
+    if (!f.buf) return (res.writeHead(204, hd), res.end());
+    res.writeHead(200, Object.assign(hd, { "Content-Type": "image/jpeg", "Content-Length": f.buf.length }));
+    return res.end(f.buf);
+  }
+  return fail(res, 404, "Not here.");
+}
 function brState(u) {
   const st = BRW ? BRW.state(u) : { available: !1, active: null };
   return Object.assign(st, { ack: u.role === "owner" || !!u.brAck, on: brOn(), can: canBrowse(u), allowed: canBrowse(u) && brOn(), module: !!BRW, exe: u.role === "owner" ? (C.browser && C.browser.exe) || "" : undefined });
@@ -2109,7 +2223,7 @@ async function route(req, res) {
         const cc = String(url.searchParams.get("count") || "");
         /^[a-z0-9-]{2,40}$/.test(cc) && cc !== C.countCode && ((C.countCode = cc), writeJson(CONF, C));
       }
-      return json(res, 200, Object.assign(await systemInfo(req), { visitsBase: C.visitsBase || 0, visitsBaseAt: C.visitsBaseAt || 0 }));
+      return json(res, 200, Object.assign(await systemInfo(req), { visitsBase: C.visitsBase || 0, visitsBaseAt: C.visitsBaseAt || 0, browser: brStats() }));
     }
     case "/api/system/visits-base": {
       // 1.10.0: "count from now": the counter's total so far (the owner's own devices were in it) stops showing
@@ -2726,6 +2840,24 @@ async function route(req, res) {
       !C.browser.on && BRW && BRW.stop("Switched off on the rig.");
       log("Rig browser", C.browser.on ? "on" : "off");
       return json(res, 200, Object.assign(brState(u), { visits: readJson(hubf("browser-log.json"), { visits: [] }).visits.slice(0, 40) }));
+    }
+    case "/api/browser/guests": {
+      if (!rigCtl(req, a)) return ctlNo(res);
+      if (M === "POST") return json(res, 200, guestNew(await jsonBody(req, 2000)));
+      return json(res, 200, { guests: guestLoad().guests.map(guestView) });
+    }
+    case "/api/browser/guests/revoke": {
+      if (!rigCtl(req, a)) return ctlNo(res);
+      if (M !== "POST") break;
+      const b = await jsonBody(req, 1000),
+        g = guestLoad().guests.find((x) => x.id === b.id);
+      if (!g) return fail(res, 404, "No such guest code.");
+      b.remove ? (GST.guests = GST.guests.filter((x) => x !== g)) : (g.revoked = Date.now());
+      for (const [k, v] of GSESS) v.gid === g.id && GSESS.delete(k);
+      BRW && BRW.active() && BRW.active().user.id === "g:" + g.id && BRW.stop("The owner ended the guest code.");
+      guestSave();
+      log("Guest code", b.remove ? "removed:" : "revoked:", g.name);
+      return json(res, 200, { guests: GST.guests.map(guestView) });
     }
     case "/api/browser/log": {
       if (!rigCtl(req, a)) return ctlNo(res);
