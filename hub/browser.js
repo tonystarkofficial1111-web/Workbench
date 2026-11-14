@@ -87,6 +87,27 @@ function normUrl(u) {
   return "https://duckduckgo.com/?q=" + encodeURIComponent(u);
 }
 
+// ---- limits for guests and the public (1.19.0) --------------------------------------------------------
+// A built-in list of kinds of site a guest can't open (adult, gambling, piracy, and web proxies that would let
+// someone slip past the rig's rules). It is a best effort: a list like this can't know every site. The strict
+// protection is the owner's own "only these sites" list, which guests can't go outside of.
+const BLOCK_WORDS = /(^|[.-])(porn|porno|xxx|sex|xvideos|xnxx|xhamster|redtube|youporn|pornhub|spankbang|onlyfans|fansly|chaturbate|stripchat|bongacams|livejasmin|camsoda|cam4|hentai|rule34|nhentai|e621|nsfw|escort|erotic|milf|brazzers|fap|jav|bet365|betway|bovada|draftkings|fanduel|casino|poker|sportsbook|slots|1xbet|stake|roobet|bc\.game|torrent|piratebay|thepiratebay|1337x|rarbg|yts|nyaa|kickass|limetorrents|fmovies|123movies|putlocker|soap2day|gomovies|streameast|croxyproxy|proxysite|kproxy|hidemyass|hide\.me|whoer|tor2web|onion)([.-]|$)/i;
+const normHost = (e) => String(e || "").toLowerCase().trim().replace(/^[a-z]+:\/\//, "").replace(/^\*\./, "").replace(/^www\./, "").split(/[/?#:\s]/)[0].replace(/\.+$/, "");
+// words that are safe to find anywhere inside a name (so "ecasino.net" and "pokerstars.eu" are caught)
+const BLOCK_SUB = /(porn|xvideos|xnxx|xhamster|redtube|youporn|onlyfans|chaturbate|livejasmin|hentai|casino|pokerstars|piratebay|torrent|bet365|sportsbet|stripchat|bongacams)/i;
+function hostBlocked(h) {
+  h = normHost(h);
+  return !!h && (BLOCK_WORDS.test(h) || BLOCK_SUB.test(h));
+}
+function hostListed(list, h) {
+  h = normHost(h);
+  return !!h && (list || []).some((e) => {
+    e = normHost(e);
+    return e && (h === e || h.endsWith("." + e));
+  });
+}
+const NOTE_PAGE = (t, b) => "<!doctype html><meta charset=utf-8><title>" + t + "</title><meta name=viewport content='width=device-width'><body style=\"margin:0;display:flex;align-items:center;justify-content:center;height:100vh;background:#14161c;color:#eef1f6;font:16px/1.5 system-ui,sans-serif;text-align:center\"><div style=\"max-width:420px;padding:24px\"><h2 style=\"margin:0 0 8px\">" + t + "</h2><p style=\"margin:0;color:#aab3c2\">" + b + "</p></div></body>";
+
 function create(opts) {
   const log = opts.log || (() => {}),
     allowLocal = !!(opts.allowLocal || process.env.WB_BROWSER_ALLOW_LOCAL);
@@ -124,6 +145,11 @@ function create(opts) {
         res.writeHead(400);
         return res.end();
       }
+      if (S && S.policy && hostBlocked(u.hostname)) {
+        S.refused = (S.refused || 0) + 1;
+        res.writeHead(403, { "Content-Type": "text/plain" });
+        return res.end("Not allowed.");
+      }
       const addr = u.protocol === "http:" ? await publicAddr(u.hostname, allowLocal) : "";
       if (!addr) {
         S && S.blocked++;
@@ -140,8 +166,13 @@ function create(opts) {
     });
     srv.on("connect", async (req, sock, head) => {
       sock.on("error", () => {}); // the browser hanging up mustn't take the Hub down
-      const m = /^(\[[^\]]+\]|[^:]+):(\d+)$/.exec(req.url || ""),
-        addr = m ? await publicAddr(m[1], allowLocal) : "";
+      const m = /^(\[[^\]]+\]|[^:]+):(\d+)$/.exec(req.url || "");
+      if (m && S && S.policy && hostBlocked(m[1])) {
+        S.refused = (S.refused || 0) + 1;
+        sock.end("HTTP/1.1 403 Forbidden\r\n\r\n");
+        return;
+      }
+      const addr = m ? await publicAddr(m[1], allowLocal) : "";
       if (!addr || +m[2] > 65535) {
         S && S.blocked++;
         S && m && (S.lastBlocked = m[1]);
@@ -252,7 +283,7 @@ function create(opts) {
     await s.pg.send("Page.stopScreencast").catch(() => {});
     await s.pg.send("Page.startScreencast", { format: "jpeg", quality: 55, maxWidth: w, maxHeight: h, everyNthFrame: 1 });
   }
-  async function start(user, cfg) {
+  async function start(user, cfg, policy) {
     if (S) {
       if (S.user.id === user.id) return state(user);
       throw Object.assign(new Error(S.user.name + " is using the rig's browser right now."), { code: 409 });
@@ -315,6 +346,7 @@ function create(opts) {
         pg = await cdp(page.webSocketDebuggerUrl);
       S = { user: { id: user.id, name: user.name }, targetId: page.id, id, proc, proxy, dir, br, pg, port, at: Date.now(), seen: Date.now(), url: "about:blank", title: "", host: "", n: 0, frame: null, waiters: [], blocked: 0, lastBlocked: "", w: 1280, h: 720, fw: 1280, fh: 720 };
       const sess = S;
+      sess.policy = policy || null;
       proc.on("exit", () => S === sess && stop("The browser closed."));
       pg.onclose = () => S === sess && stop("The browser closed.");
       pg.on("Page.screencastFrame", (p) => {
@@ -347,6 +379,26 @@ function create(opts) {
       pg.on("Page.javascriptDialogOpening", (p) => pg.send("Page.handleJavaScriptDialog", { accept: p.type === "alert" }).catch(() => {}));
       await br.send("Browser.setDownloadBehavior", { behavior: "deny" }).catch(() => {});
       await pg.send("Page.enable");
+      if (sess.policy) {
+        // no files in (the file chooser is held and never answered), and every page the guest opens is checked
+        await pg.send("Page.setInterceptFileChooserDialog", { enabled: !0 }).catch(() => {});
+        pg.on("Fetch.requestPaused", (p) => {
+          let h = "";
+          try {
+            h = new URL(p.request.url).hostname;
+          } catch {}
+          const why = !h ? "" : hostBlocked(h) ? "cat" : sess.policy.only && !hostListed(sess.policy.only, h) ? "list" : "";
+          if (!why) return void pg.send("Fetch.continueRequest", { requestId: p.requestId }).catch(() => {});
+          sess.refused = (sess.refused || 0) + 1;
+          const page = why === "list" ? NOTE_PAGE("That site isn't on the list", "The owner only lets this browser open the sites on their list.") : NOTE_PAGE("Not allowed here", "This kind of site is blocked for guests.");
+          pg.send("Fetch.fulfillRequest", { requestId: p.requestId, responseCode: 200, responseHeaders: [{ name: "Content-Type", value: "text/html; charset=utf-8" }], body: Buffer.from(page).toString("base64") }).catch(() => {});
+        });
+        await pg.send("Fetch.enable", { patterns: [{ urlPattern: "*", resourceType: "Document", requestStage: "Request" }] });
+        if (sess.policy.minutes) {
+          sess.endsAt = Date.now() + sess.policy.minutes * 60000;
+          sess.cap = setTimeout(() => S === sess && stop("The " + sess.policy.minutes + " minutes ran out."), sess.policy.minutes * 60000);
+        }
+      }
       // links that want a new window open here instead (there is only one window)
       await pg.send("Page.addScriptToEvaluateOnNewDocument", { source: "window.open=function(u){if(u)location.href=u;return null};document.addEventListener('click',function(e){var a=e.target&&e.target.closest&&e.target.closest('a[target]');if(a)a.target='_self'},true);" });
       await pg.send("Emulation.setFocusEmulationEnabled", { enabled: !0 }).catch(() => {});
@@ -373,6 +425,7 @@ function create(opts) {
     S = null;
     clearInterval(s.idle);
     clearInterval(s.tt);
+    clearTimeout(s.cap);
     for (const f of s.waiters.splice(0)) f();
     try {
       s.pg.close();
@@ -400,7 +453,7 @@ function create(opts) {
   }
   function state(user) {
     const exe = findExe(opts.exe && opts.exe());
-    return { available: !!exe, active: S ? { user: S.user.name, since: S.at, host: S.host, mine: !!user && S.user.id === user.id, blocked: S.blocked, lastBlocked: S.lastBlocked } : null, url: S ? S.url : "", title: S ? S.title : "", w: S ? S.w : 0, h: S ? S.h : 0, n: S ? S.n : 0 };
+    return { available: !!exe, active: S ? { user: S.user.name, since: S.at, host: S.host, mine: !!user && S.user.id === user.id, blocked: S.blocked, lastBlocked: S.lastBlocked, endsAt: S.endsAt || 0, refused: S.refused || 0, limited: !!S.policy } : null, url: S ? S.url : "", title: S ? S.title : "", w: S ? S.w : 0, h: S ? S.h : 0, n: S ? S.n : 0 };
   }
   const mine = (user) => {
     if (!S || S.user.id !== user.id) throw Object.assign(new Error("You don't have the rig's browser open."), { code: 409 });
@@ -413,6 +466,7 @@ function create(opts) {
     if (url === "reload") return s.pg.send("Page.reload");
     const u = normUrl(url);
     if (!u) throw Object.assign(new Error("Type a web address or something to search for."), { code: 400 });
+    if (s.policy && s.policy.only && !s.policy.only.length) throw Object.assign(new Error("The owner hasn't added any allowed sites yet."), { code: 403 });
     await s.pg.send("Page.navigate", { url: u });
   }
   async function resize(user, w, h) {
@@ -469,4 +523,4 @@ function create(opts) {
   return { start, stop, go, input, resize, frame, state, active: () => S };
 }
 
-module.exports = { create, findExe, privIp, publicAddr, normUrl };
+module.exports = { create, findExe, privIp, publicAddr, normUrl, hostBlocked, hostListed, normHost };

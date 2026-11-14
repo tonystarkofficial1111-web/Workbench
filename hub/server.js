@@ -18,7 +18,7 @@ const http = require("http"),
   { readTags } = require("./tags.js"),
   { __wbReminders } = require("./reminders.js");
 
-const VERSION = "1.18.0";
+const VERSION = "1.19.0";
 const HOME = process.env.WB_HUB_HOME || path.join(__dirname, "..");
 const CONF = process.env.WB_HUB_CONFIG || path.join(HOME, "hub.json");
 const APP = "https://tonystarkofficial1111-web.github.io";
@@ -1769,6 +1769,8 @@ async function inboxRoute(req, res) {
   if (RD) return remoteDoor(req, res, RD[1], RD[2] || "/", url);
   const GD = /^\/g\/(wbg_[A-Za-z0-9_-]{20,80})(\/.*)?$/.exec(url.pathname);
   if (GD) return guestDoor(req, res, GD[1], GD[2] || "/", url);
+  const PD = /^\/p(\/state|\/join|\/browser\/[a-z]+)$/.exec(url.pathname);
+  if (PD) return pubDoor(req, res, PD[1], url);
   res.setHeader("Vary", "Origin");
   if (o) (res.setHeader("Access-Control-Allow-Origin", o), res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS"), res.setHeader("Access-Control-Allow-Headers", "Content-Type"));
   if (req.method === "OPTIONS") return (res.writeHead(204), res.end());
@@ -2048,6 +2050,21 @@ try {
       try {
         pubEvent("browser", u.name + " closed the rig's browser", why);
       } catch {}
+      // guests and visitors: the minutes used count against the day, and a cool-down starts
+      try {
+        if (/^[gp]:/.test(u.id)) {
+          const t0 = brStartedAt.get(u.id) || Date.now(),
+            mins = Math.max(1, Math.round((Date.now() - t0) / 60000)),
+            L = brLimits(),
+            cd = (u.id[0] === "p" ? L.pub.cooldown : L.guest.cooldown) | 0;
+          brStartedAt.delete(u.id);
+          cd > 0 && brCool.set(u.id, Date.now() + cd * 60000);
+          if (u.id[0] === "p") {
+            const X = pbuLoad().users[u.id.slice(2)];
+            X && ((X.mins = { [brDayKey()]: ((X.mins || {})[brDayKey()] || 0) + mins }), pbuSave());
+          }
+        }
+      } catch {}
     },
     onBlock: (u) => {
       try {
@@ -2085,7 +2102,7 @@ function brStats() {
   const days = [];
   for (let i = 6; i >= 0; i--) days.push((S.days[brDay(Date.now() - i * 864e5)] || { sites: 0 }).sites);
   const G = guestLoad().guests;
-  return { on: brOn(), module: !!BRW, usingNow: act ? act.user.name : "", sitesToday: today.sites, peopleToday: today.people.length, sitesWeek: days.reduce((a, b) => a + b, 0), peopleWeek: ppl.size, days, guests: G.filter((g) => !g.revoked && g.exp > Date.now()).length };
+  return { on: brOn(), module: !!BRW, usingNow: act ? act.user.name : "", sitesToday: today.sites, peopleToday: today.people.length, sitesWeek: days.reduce((a, b) => a + b, 0), peopleWeek: ppl.size, days, guests: G.filter((g) => !g.revoked && g.exp > Date.now()).length, pub: !!brLimits().pub.on, pubPeople: Object.keys(pbuLoad().users).length };
 }
 // ---- guest codes (1.18.0): someone with no Hub account gets the rig's browser and nothing else.
 // The owner makes a code on the rig. It holds the public Funnel address and a secret key, scrambled into one
@@ -2109,6 +2126,126 @@ function guestNew(b) {
   return { code: "WBG1-" + Buffer.from(JSON.stringify({ b: base, k: key })).toString("base64url"), guest: guestView(g) };
 }
 const guestView = (g) => ({ id: g.id, name: g.name, at: g.at, exp: g.exp, last: g.last, uses: g.uses, who: g.acctName || "", bound: !!g.acct, revoked: !!g.revoked, live: !g.revoked && g.exp > Date.now() });
+// ---- limits for guests and the public (1.19.0) -----------------------------------------------------------
+// Everyone who is not a signed-in Hub person (a guest-code holder, or a visitor in "free browsing for everyone")
+// gets the browser under rules: a list of kinds of site that is never opened, no files in or out, a time cap,
+// and (if the owner wants) only the sites on the owner's list. The owner can change all of it, and switch the
+// public mode off at once.
+const BRL_DEF = { guest: { minutes: 60, cooldown: 0, onlyListed: !1 }, pub: { on: !1, minutes: 30, cooldown: 30, daily: 90, onlyListed: !0 }, sites: [] };
+function brLimits() {
+  const c = (C.browser && C.browser.limits) || {};
+  return {
+    guest: Object.assign({}, BRL_DEF.guest, c.guest),
+    pub: Object.assign({}, BRL_DEF.pub, c.pub),
+    sites: Array.isArray(c.sites) ? c.sites.slice(0, 200) : [],
+  };
+}
+const brSites = (L) => L.sites.map((x) => require("./browser.js").normHost(x)).filter(Boolean);
+function brPolicy(u) {
+  if (!u || u.role !== "guest") return null;
+  const L = brLimits(),
+    A = u.pub ? L.pub : L.guest;
+  return { minutes: Math.max(1, Math.min(240, A.minutes | 0 || 30)), only: A.onlyListed ? brSites(L) : null };
+}
+let PBU = null;
+const pbuLoad = () => (PBU = PBU || readJson(hubf("pub-browser.json"), { users: {} })),
+  pbuSave = () => writeJson(hubf("pub-browser.json"), PBU);
+const brDayKey = () => new Date().toISOString().slice(0, 10);
+const brCool = new Map();
+function brLimitsView() {
+  const L = brLimits(),
+    P = pbuLoad();
+  return Object.assign(L, {
+    users: Object.entries(P.users)
+      .map(([id, x]) => ({ id, name: x.name, uses: x.uses || 0, last: x.last || 0, banned: !!x.banned, today: (x.mins && x.mins[brDayKey()]) || 0 }))
+      .sort((a, b) => b.last - a.last)
+      .slice(0, 40),
+  });
+}
+// the shared part of what a guest (by code) or a visitor (public) can do: the browser, and nothing else
+async function guestBrowserApi(req, res, url, P, u, G) {
+  const M = req.method,
+    st = () => Object.assign(BRW ? BRW.state(u) : { available: !1, active: null }, { ack: !!G.ack(), on: brOn(), can: !0, allowed: brOn(), module: !!BRW, limits: brPolicyView(u) });
+  if (P === "/state") return json(res, 200, st());
+  if (P === "/ack" && M === "POST") return (G.setAck(), json(res, 200, st()));
+  if (P === "/stop" && M === "POST") return (BRW && BRW.active() && BRW.active().user.id === u.id && BRW.stop("Closed."), json(res, 200, st()));
+  if (!BRW || !brOn()) return fail(res, 403, "The rig's browser isn't available.");
+  if (P === "/start" && M === "POST") {
+    if (!G.ack()) return fail(res, 409, "Read the notice about the rig's browser first.");
+    G.beforeStart && G.beforeStart();
+    return json(res, 200, await BRW.start(u, C.browser, brPolicy(u)));
+  }
+  if (["/go", "/input", "/resize"].includes(P) && M === "POST") {
+    const b = await jsonBody(req, 20000);
+    if (P === "/go") await BRW.go(u, b.url);
+    else if (P === "/input") await BRW.input(u, b.events);
+    else await BRW.resize(u, b.w, b.h);
+    return json(res, 200, { ok: !0 });
+  }
+  if (P === "/frame") {
+    const f = await BRW.frame(u, +url.searchParams.get("n") || 0, 20000),
+      hd = { "Cache-Control": "no-store", "X-Frame": String(f.n), "X-Url": encodeURIComponent(f.url), "X-Title": encodeURIComponent(f.title), "X-Size": f.w + "x" + f.h, "Access-Control-Expose-Headers": "X-Frame, X-Url, X-Title, X-Size" };
+    if (!f.buf) return (res.writeHead(204, hd), res.end());
+    res.writeHead(200, Object.assign(hd, { "Content-Type": "image/jpeg", "Content-Length": f.buf.length }));
+    return res.end(f.buf);
+  }
+  return fail(res, 404, "Not here.");
+}
+function brPolicyView(u) {
+  const p = brPolicy(u);
+  if (!p) return null;
+  const L = brLimits();
+  return { minutes: p.minutes, onlyListed: !!p.only, sites: p.only ? p.only : [], files: !1 };
+}
+const pubBad = new Map();
+// the public door: /p/state (anyone), /p/join (a Workbench Google sign-in), /p/browser/... (a guest session)
+async function pubDoor(req, res, rest, url) {
+  cors(req, res);
+  if (req.method === "OPTIONS") return (res.writeHead(204), res.end());
+  const L = brLimits(),
+    now = Date.now();
+  if (rest === "/state") return json(res, 200, L.pub.on && BRW && brOn() ? { on: !0, minutes: L.pub.minutes, cooldown: L.pub.cooldown, daily: L.pub.daily, onlyListed: !!L.pub.onlyListed, sites: L.pub.onlyListed ? brSites(L) : [], busy: !!(BRW && BRW.active()) } : { on: !1 });
+  if (!L.pub.on || !BRW || !brOn()) return fail(res, 404, "Free browsing isn't on right now.");
+  if (rest === "/join") {
+    if (req.method !== "POST") return fail(res, 405, "Not here.");
+    acctLimit(req, 30);
+    const b = await jsonBody(req, 4000),
+      id = acctCheck(b.token);
+    if (!id) return fail(res, 401, "Sign in with Google on Workbench first.");
+    const A = acctRead(acctFile(id), null) || {},
+      PU = pbuLoad(),
+      X = (PU.users[id] = PU.users[id] || { name: clip(A.name || "Visitor", 60), uses: 0, last: 0, ack: 0, mins: {} });
+    if (X.banned) return fail(res, 403, "The owner has turned this account off.");
+    X.name = clip(A.name || X.name || "Visitor", 60);
+    X.last = now;
+    pbuSave();
+    const tok = crypto.randomBytes(32).toString("base64url");
+    for (const [k, v] of GSESS) v.exp < now && GSESS.delete(k);
+    GSESS.set(sha(tok), { pub: id, exp: now + 12 * 3600000 });
+    return json(res, 200, { gtoken: tok, name: X.name });
+  }
+  const h = String(req.headers.authorization || ""),
+    S = GSESS.get(sha(h.startsWith("Bearer ") ? h.slice(7).trim() : ""));
+  if (!S || !S.pub || S.exp < now) return fail(res, 401, "Join again.");
+  const PU = pbuLoad(),
+    X = PU.users[S.pub];
+  if (!X || X.banned) return fail(res, 403, "The owner has turned this account off.");
+  const u = { id: "p:" + S.pub, name: X.name + " (visitor)", role: "guest", pub: !0, browser: !0, brAck: X.ack },
+    P = rest.replace(/^\/browser/, "");
+  return guestBrowserApi(req, res, url, P, u, {
+    ack: () => X.ack,
+    setAck: () => ((X.ack = now), pbuSave()),
+    beforeStart: () => {
+      const cd = brCool.get(u.id) || 0;
+      if (cd > Date.now()) throw Object.assign(new Error("Wait " + Math.ceil((cd - Date.now()) / 60000) + " more minute(s) before opening it again."), { code: 429 });
+      if (((X.mins || {})[brDayKey()] || 0) >= L.pub.daily) throw Object.assign(new Error("That's today's free time used up. Come back tomorrow."), { code: 429 });
+      X.uses++;
+      pbuSave();
+      brStartedAt.set(u.id, Date.now());
+    },
+  });
+}
+const brStartedAt = new Map();
 async function guestDoor(req, res, key, rest, url) {
   cors(req, res);
   if (req.method === "OPTIONS") return (res.writeHead(204), res.end());
@@ -2141,35 +2278,19 @@ async function guestDoor(req, res, key, rest, url) {
     S = GSESS.get(sha(h.startsWith("Bearer ") ? h.slice(7).trim() : ""));
   if (!S || S.gid !== g.id || S.exp < now) return fail(res, 401, "Use the code again to reconnect.");
   const u = { id: "g:" + g.id, name: g.acctName + " (guest)", role: "guest", browser: !0, brAck: g.ack },
-    M = req.method,
     P = rest.replace(/^\/browser/, "");
-  const st = () => Object.assign(BRW ? BRW.state(u) : { available: !1, active: null }, { ack: !!g.ack, on: brOn(), can: !0, allowed: brOn(), module: !!BRW });
-  if (P === "/state") return json(res, 200, st());
-  if (P === "/ack" && M === "POST") return ((g.ack = now), guestSave(), json(res, 200, st()));
-  if (P === "/stop" && M === "POST") return (BRW && BRW.active() && BRW.active().user.id === u.id && BRW.stop("Closed."), json(res, 200, st()));
-  if (!BRW || !brOn()) return fail(res, 403, "The rig's browser isn't available.");
-  if (P === "/start" && M === "POST") {
-    if (!g.ack) return fail(res, 409, "Read the notice about the rig's browser first.");
-    g.last = now;
-    g.uses++;
-    guestSave();
-    return json(res, 200, await BRW.start(u, C.browser));
-  }
-  if (["/go", "/input", "/resize"].includes(P) && M === "POST") {
-    const b = await jsonBody(req, 20000);
-    if (P === "/go") await BRW.go(u, b.url);
-    else if (P === "/input") await BRW.input(u, b.events);
-    else await BRW.resize(u, b.w, b.h);
-    return json(res, 200, { ok: !0 });
-  }
-  if (P === "/frame") {
-    const f = await BRW.frame(u, +url.searchParams.get("n") || 0, 20000),
-      hd = { "Cache-Control": "no-store", "X-Frame": String(f.n), "X-Url": encodeURIComponent(f.url), "X-Title": encodeURIComponent(f.title), "X-Size": f.w + "x" + f.h, "Access-Control-Expose-Headers": "X-Frame, X-Url, X-Title, X-Size" };
-    if (!f.buf) return (res.writeHead(204, hd), res.end());
-    res.writeHead(200, Object.assign(hd, { "Content-Type": "image/jpeg", "Content-Length": f.buf.length }));
-    return res.end(f.buf);
-  }
-  return fail(res, 404, "Not here.");
+  return guestBrowserApi(req, res, url, P, u, {
+    ack: () => g.ack,
+    setAck: () => ((g.ack = now), guestSave()),
+    beforeStart: () => {
+      const L = brLimits().guest,
+        cd = brCool.get(u.id) || 0;
+      if (cd > Date.now()) throw Object.assign(new Error("Wait " + Math.ceil((cd - Date.now()) / 60000) + " more minute(s) before opening it again."), { code: 429 });
+      g.last = now;
+      g.uses++;
+      guestSave();
+    },
+  });
 }
 function brState(u) {
   const st = BRW ? BRW.state(u) : { available: !1, active: null };
@@ -2845,6 +2966,40 @@ async function route(req, res) {
       if (!rigCtl(req, a)) return ctlNo(res);
       if (M === "POST") return json(res, 200, guestNew(await jsonBody(req, 2000)));
       return json(res, 200, { guests: guestLoad().guests.map(guestView) });
+    }
+    case "/api/browser/limits": {
+      if (!rigCtl(req, a)) return ctlNo(res);
+      if (M === "POST") {
+        const b = await jsonBody(req, 12000),
+          cur = brLimits(),
+          num = (v, lo, hi, d) => (Number.isFinite(+v) ? Math.max(lo, Math.min(hi, Math.round(+v))) : d);
+        C.browser = Object.assign({ on: !1, exe: "" }, C.browser);
+        const nl = { guest: Object.assign({}, cur.guest), pub: Object.assign({}, cur.pub), sites: cur.sites };
+        if (b.pub) {
+          "on" in b.pub && (nl.pub.on = !!b.pub.on);
+          "onlyListed" in b.pub && (nl.pub.onlyListed = !!b.pub.onlyListed);
+          "minutes" in b.pub && (nl.pub.minutes = num(b.pub.minutes, 5, 240, 30));
+          "cooldown" in b.pub && (nl.pub.cooldown = num(b.pub.cooldown, 0, 1440, 30));
+          "daily" in b.pub && (nl.pub.daily = num(b.pub.daily, 5, 1440, 90));
+        }
+        if (b.guest) {
+          "onlyListed" in b.guest && (nl.guest.onlyListed = !!b.guest.onlyListed);
+          "minutes" in b.guest && (nl.guest.minutes = num(b.guest.minutes, 5, 240, 60));
+          "cooldown" in b.guest && (nl.guest.cooldown = num(b.guest.cooldown, 0, 1440, 0));
+        }
+        if (Array.isArray(b.sites)) nl.sites = [...new Set(b.sites.map((x) => require("./browser.js").normHost(x)).filter((x) => /^[a-z0-9.-]{3,100}$/.test(x) && x.includes(".")))].slice(0, 200);
+        C.browser.limits = nl;
+        // new rules apply from now: waiting times people were already serving start over
+        (nl.pub.cooldown !== cur.pub.cooldown || nl.guest.cooldown !== cur.guest.cooldown) && brCool.clear();
+        if (b.ban) {
+          const X = pbuLoad().users[String(b.ban.id)];
+          X && ((X.banned = b.ban.on ? Date.now() : 0), pbuSave(), b.ban.on && BRW && BRW.active() && BRW.active().user.id === "p:" + b.ban.id && BRW.stop("The owner turned this account off."));
+        }
+        writeJson(CONF, C);
+        !nl.pub.on && BRW && BRW.active() && BRW.active().user.id[0] === "p" && BRW.stop("Free browsing was switched off.");
+        log("Browser limits changed" + (b.pub && "on" in b.pub ? " · public " + (nl.pub.on ? "on" : "off") : ""));
+      }
+      return json(res, 200, brLimitsView());
     }
     case "/api/browser/guests/revoke": {
       if (!rigCtl(req, a)) return ctlNo(res);
