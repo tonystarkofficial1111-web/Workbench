@@ -18,7 +18,7 @@ const http = require("http"),
   { readTags } = require("./tags.js"),
   { __wbReminders } = require("./reminders.js");
 
-const VERSION = "1.19.0";
+const VERSION = "1.20.0";
 const HOME = process.env.WB_HUB_HOME || path.join(__dirname, "..");
 const CONF = process.env.WB_HUB_CONFIG || path.join(HOME, "hub.json");
 const APP = "https://tonystarkofficial1111-web.github.io";
@@ -1067,7 +1067,7 @@ async function systemInfo(req) {
     libraries: libs,
     backup: lastBackup(),
     jobs: [...jobs.values()].filter((j) => j.state === "downloading" || j.state === "queued").length,
-    hub: { version: VERSION, up: Math.round((Date.now() - STARTED) / 1000), node: process.version, mem: mem.rss, autoUpdate: !!C.autoUpdate, update: { checked: UPD.checked, latest: UPD.latest } },
+    hub: { version: VERSION, up: Math.round((Date.now() - STARTED) / 1000), node: process.version, mem: mem.rss, autoUpdate: !!C.autoUpdate, update: { checked: UPD.checked, latest: UPD.latest, err: UPD.err || "" }, tray: !!process.env.WB_HUB_TRAY },
   };
 }
 
@@ -1994,6 +1994,86 @@ async function goatTotal() {
     return null;
   }
 }
+// ---- GoatCounter on Rig Start (1.20.0) -------------------------------------------------------------------------------
+// With a read-only API key (GoatCounter → Settings → API, permission "Read statistics") the Hub asks GoatCounter for the
+// last 30 days of visitors, the top pages, where people came from and which countries, and keeps the answer for five
+// minutes. The key stays in hub.json on the rig; Workbench only ever sees the numbers. Without a key it still shows the
+// public all-time counter. The answers are read leniently (GoatCounter has changed field names between versions), and
+// whatever could not be read is reported by name instead of hiding the whole card.
+const GOAT = { at: 0, busy: !1, data: null };
+const goatBase = () => process.env.WB_GOAT_URL || "https://" + C.countCode + ".goatcounter.com";
+async function goatApi(p, q) {
+  const u = new URL(goatBase() + "/api/v0/" + p);
+  for (const [k, v] of Object.entries(q || {})) u.searchParams.set(k, v);
+  const r = await fetch(u, { headers: { Authorization: "Bearer " + C.goatToken, Accept: "application/json" }, signal: AbortSignal.timeout(15000) });
+  if (r.status === 401 || r.status === 403) throw new Error("GoatCounter refused the API key (it needs the “Read statistics” permission)");
+  if (r.status === 404) throw new Error("GoatCounter doesn't know that site code (“" + C.countCode + "”)");
+  if (!r.ok) throw new Error("GoatCounter answered " + r.status);
+  const text = await r.text();
+  try {
+    return { j: JSON.parse(text), raw: text };
+  } catch {
+    throw new Error("GoatCounter's answer wasn't JSON");
+  }
+}
+const gcNum = (o, ...keys) => {
+  for (const k of keys) if (o && o[k] != null && o[k] !== "" && !isNaN(+o[k])) return +o[k];
+  return 0;
+};
+// a list of { name, count } from whatever shape came back
+function gcRows(j, nameKeys) {
+  const arr = Array.isArray(j) ? j : [j && j.stats, j && j.hits, j && j.refs, j && j.rows, j && j.data].find((x) => Array.isArray(x)) || [];
+  return arr
+    .map((r) => ({ name: String(nameKeys.map((k) => r && r[k]).find((x) => x != null && x !== "") ?? "").slice(0, 80), count: gcNum(r, "count", "count_unique", "visitors", "value", "total") }))
+    .filter((r) => r.name)
+    .slice(0, 6);
+}
+async function goatRefresh(force) {
+  if (!C.countCode || !C.goatToken || GOAT.busy || (!force && Date.now() - GOAT.at < 300000)) return;
+  GOAT.busy = !0;
+  const day = (t) => new Date(t).toISOString().slice(0, 10),
+    end = new Date(),
+    start = new Date(end.getTime() - 29 * 864e5),
+    q = { start: day(start) + "T00:00:00Z", end: day(end) + "T23:59:59Z" },
+    out = { ok: !0, at: Date.now(), days: [], total: 0, pages: [], refs: [], places: [], browsers: [], errs: [], sample: "" };
+  const step = async (name, fn) => {
+    try {
+      await fn();
+    } catch (e) {
+      out.errs.push(name + ": " + e.message);
+    }
+  };
+  await step("visitors", async () => {
+    const { j, raw } = await goatApi("stats/total", Object.assign({ daily: "true" }, q));
+    out.sample = raw.slice(0, 500);
+    const rows = Array.isArray(j.stats) ? j.stats : [],
+      by = {};
+    for (const r of rows) {
+      const d = String(r.day || r.date || "").slice(0, 10);
+      if (!/^\d{4}-\d\d-\d\d$/.test(d)) continue;
+      by[d] = (by[d] || 0) + (r.daily != null ? gcNum(r, "daily") : Array.isArray(r.hourly) ? r.hourly.reduce((a, b) => a + (+b || 0), 0) : gcNum(r, "count", "visitors"));
+    }
+    for (let i = 29; i >= 0; i--) {
+      const d = day(end.getTime() - i * 864e5);
+      out.days.push({ d, n: by[d] || 0 });
+    }
+    out.total = gcNum(j, "total", "total_unique", "count") || out.days.reduce((a, b) => a + b.n, 0);
+  });
+  await step("pages", async () => (out.pages = gcRows((await goatApi("stats/hits", Object.assign({ limit: "5" }, q))).j, ["path", "title", "name"])));
+  await step("sources", async () => (out.refs = gcRows((await goatApi("stats/toprefs", q)).j, ["name", "ref", "id"])));
+  await step("countries", async () => (out.places = gcRows((await goatApi("stats/locations", q)).j, ["name", "id", "country"])));
+  await step("browsers", async () => (out.browsers = gcRows((await goatApi("stats/browsers", q)).j, ["name", "id", "browser"])));
+  out.ok = out.days.length > 0;
+  GOAT.data = out;
+  GOAT.at = Date.now();
+  GOAT.busy = !1;
+  out.errs.length && log("GoatCounter:", out.errs.join(" · "));
+}
+function goatView() {
+  const d = GOAT.data;
+  C.countCode && C.goatToken && Date.now() - GOAT.at >= 300000 && goatRefresh().catch(() => {});
+  return { code: C.countCode || "", hasKey: !!C.goatToken, ready: !!d, busy: GOAT.busy, at: d ? d.at : 0, days: d ? d.days : [], total: d ? d.total : 0, pages: d ? d.pages : [], refs: d ? d.refs : [], places: d ? d.places : [], browsers: d ? d.browsers : [], errs: d ? d.errs : [] };
+}
 async function histSample() {
   HIS = HIS || readJson(hubf("history.json"), { points: [] });
   try {
@@ -2344,7 +2424,34 @@ async function route(req, res) {
         const cc = String(url.searchParams.get("count") || "");
         /^[a-z0-9-]{2,40}$/.test(cc) && cc !== C.countCode && ((C.countCode = cc), writeJson(CONF, C));
       }
-      return json(res, 200, Object.assign(await systemInfo(req), { visitsBase: C.visitsBase || 0, visitsBaseAt: C.visitsBaseAt || 0, browser: brStats() }));
+      return json(res, 200, Object.assign(await systemInfo(req), { visitsBase: C.visitsBase || 0, visitsBaseAt: C.visitsBaseAt || 0, browser: brStats(), goat: goatView() }));
+    }
+    case "/api/goat/config": {
+      if (!owner) return fail(res, 403, "Only the owner can do that.");
+      if (!rigCtl(req, a)) return ctlNo(res);
+      if (M !== "POST") return json(res, 200, { hasKey: !!C.goatToken, code: C.countCode || "" });
+      const b = await jsonBody(req, 2000);
+      if ("token" in b) {
+        const t = String(b.token || "").trim();
+        if (t && !/^[A-Za-z0-9_\-.]{8,200}$/.test(t)) return fail(res, 400, "That doesn't look like a GoatCounter API key.");
+        C.goatToken = t;
+        writeJson(CONF, C);
+        GOAT.data = null;
+        GOAT.at = 0;
+        log("GoatCounter API key", t ? "saved" : "removed");
+      }
+      return json(res, 200, { hasKey: !!C.goatToken, code: C.countCode || "" });
+    }
+    case "/api/goat/test": {
+      if (!owner) return fail(res, 403, "Only the owner can do that.");
+      if (!rigCtl(req, a)) return ctlNo(res);
+      if (M !== "POST") break;
+      if (!C.countCode) return fail(res, 400, "The site code isn't known yet: open Workbench's website once on a device with the visitor counter on.");
+      if (!C.goatToken) return fail(res, 400, "Save an API key first.");
+      GOAT.busy = !1;
+      await goatRefresh(!0);
+      const v = goatView();
+      return json(res, 200, Object.assign(v, { sample: GOAT.data ? GOAT.data.sample : "" }));
     }
     case "/api/system/visits-base": {
       // 1.10.0: "count from now": the counter's total so far (the owner's own devices were in it) stops showing

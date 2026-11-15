@@ -9,9 +9,11 @@ $HubHome = Split-Path -Parent $Here
 $AppUrl = "https://tonystarkofficial1111-web.github.io/Workbench/"
 $Log = Join-Path $HubHome "logs\hub.log"
 
-# only one tray at a time
+# only one tray at a time. A tray that an older one has just started (after an update) waits for it to finish,
+# so the Hub is never left without a tray
+$mutex = New-Object System.Threading.Mutex($false, "WorkbenchHubTray")
 $created = $false
-$mutex = New-Object System.Threading.Mutex($true, "WorkbenchHubTray", [ref]$created)
+try { $created = $mutex.WaitOne(20000) } catch [System.Threading.AbandonedMutexException] { $created = $true }
 if (-not $created) { exit }
 
 function Get-Conf {
@@ -42,6 +44,7 @@ function Start-Hub {
   $psi.UseShellExecute = $false
   $psi.CreateNoWindow = $true
   $psi.EnvironmentVariables["WB_HUB_HOME"] = $HubHome
+  $psi.EnvironmentVariables["WB_HUB_TRAY"] = "1"
   $script:Proc = [System.Diagnostics.Process]::Start($psi)
 }
 function Stop-Hub {
