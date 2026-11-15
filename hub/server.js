@@ -18,7 +18,7 @@ const http = require("http"),
   { readTags } = require("./tags.js"),
   { __wbReminders } = require("./reminders.js");
 
-const VERSION = "1.20.0";
+const VERSION = "1.21.0";
 const HOME = process.env.WB_HUB_HOME || path.join(__dirname, "..");
 const CONF = process.env.WB_HUB_CONFIG || path.join(HOME, "hub.json");
 const APP = "https://tonystarkofficial1111-web.github.io";
@@ -2277,6 +2277,22 @@ function brPolicyView(u) {
   const L = brLimits();
   return { minutes: p.minutes, onlyListed: !!p.only, sites: p.only ? p.only : [], files: !1 };
 }
+// Does the rig's DNS filter out adult sites (like Cloudflare for Families, 1.1.1.3)? Everything a guest opens is looked up
+// by this same DNS, so a filtering DNS protects guests with no list at all. Asked with Cloudflare's own test names.
+async function dnsCheck() {
+  const dnsP = require("dns").promises,
+    look = async (h) => {
+      try {
+        const r = await dnsP.lookup(h, { all: !0 });
+        return r.every((x) => /^0+(:0+)*$/.test(x.address)) ? "blocked" : "open";
+      } catch (e) {
+        return e.code === "ENOTFOUND" ? "blocked" : "error";
+      }
+    },
+    [control, adult, malware] = await Promise.all([look("example.com"), look("nudity.testcategory.com"), look("malware.testcategory.com")]),
+    on = control === "open" && adult === "blocked";
+  return { control, adult, malware, filtered: on, text: control !== "open" ? "The rig couldn't look anything up just now, so I can't tell." : on ? "On: this rig's DNS refuses Cloudflare's adult test site" + (malware === "blocked" ? " and malware test site." : ".") : "Off: Cloudflare's adult test site opened. Set the rig's DNS to 1.1.1.3 and 1.0.0.3 (Windows → Network settings → DNS) to filter adult and malware sites." };
+}
 const pubBad = new Map();
 // the public door: /p/state (anyone), /p/join (a Workbench Google sign-in), /p/browser/... (a guest session)
 async function pubDoor(req, res, rest, url) {
@@ -3107,6 +3123,10 @@ async function route(req, res) {
         log("Browser limits changed" + (b.pub && "on" in b.pub ? " · public " + (nl.pub.on ? "on" : "off") : ""));
       }
       return json(res, 200, brLimitsView());
+    }
+    case "/api/browser/dnscheck": {
+      if (!rigCtl(req, a)) return ctlNo(res);
+      return json(res, 200, await dnsCheck());
     }
     case "/api/browser/guests/revoke": {
       if (!rigCtl(req, a)) return ctlNo(res);

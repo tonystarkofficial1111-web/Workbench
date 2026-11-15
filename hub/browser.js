@@ -91,7 +91,7 @@ function normUrl(u) {
 // A built-in list of kinds of site a guest can't open (adult, gambling, piracy, and web proxies that would let
 // someone slip past the rig's rules). It is a best effort: a list like this can't know every site. The strict
 // protection is the owner's own "only these sites" list, which guests can't go outside of.
-const BLOCK_WORDS = /(^|[.-])(porn|porno|xxx|sex|xvideos|xnxx|xhamster|redtube|youporn|pornhub|spankbang|onlyfans|fansly|chaturbate|stripchat|bongacams|livejasmin|camsoda|cam4|hentai|rule34|nhentai|e621|nsfw|escort|erotic|milf|brazzers|fap|jav|bet365|betway|bovada|draftkings|fanduel|casino|poker|sportsbook|slots|1xbet|stake|roobet|bc\.game|torrent|piratebay|thepiratebay|1337x|rarbg|yts|nyaa|kickass|limetorrents|fmovies|123movies|putlocker|soap2day|gomovies|streameast|croxyproxy|proxysite|kproxy|hidemyass|hide\.me|whoer|tor2web|onion)([.-]|$)/i;
+const BLOCK_WORDS = /(^|[.-])(porn|porno|xxx|sex|xvideos|xnxx|xhamster|redtube|youporn|pornhub|spankbang|onlyfans|fansly|chaturbate|stripchat|bongacams|livejasmin|camsoda|cam4|hentai|rule34|nhentai|e621|nsfw|escort|erotic|milf|brazzers|fap|jav|bet365|betway|bovada|draftkings|fanduel|casino|poker|sportsbook|slots|1xbet|stake|roobet|bc\.game|torrent|piratebay|thepiratebay|1337x|rarbg|yts|nyaa|kickass|limetorrents|fmovies|123movies|putlocker|soap2day|gomovies|streameast|croxyproxy|proxysite|kproxy|hidemyass|hide\.me|whoer|tor2web|onion|betting|wager|lottery|lotto|bingo|bookmaker|jackpot|gamble|gambling|sportsbet|parlay|gore|liveleak|bestgore|kaotic|snuff|darknet|silkroad|warez|nulled|keygen|cracked|escorts|camgirls|camshow|swinger|fetish|bdsm|nude|nudes|naked|topless|lingerie|thot|incest|hookup|sugardaddy)([.-]|$)/i;
 const normHost = (e) => String(e || "").toLowerCase().trim().replace(/^[a-z]+:\/\//, "").replace(/^\*\./, "").replace(/^www\./, "").split(/[/?#:\s]/)[0].replace(/\.+$/, "");
 // words that are safe to find anywhere inside a name (so "ecasino.net" and "pokerstars.eu" are caught)
 const BLOCK_SUB = /(porn|xvideos|xnxx|xhamster|redtube|youporn|onlyfans|chaturbate|livejasmin|hentai|casino|pokerstars|piratebay|torrent|bet365|sportsbet|stripchat|bongacams)/i;
@@ -105,6 +105,35 @@ function hostListed(list, h) {
     e = normHost(e);
     return e && (h === e || h.endsWith("." + e));
   });
+}
+// the address a filtering DNS (like Cloudflare's family 1.1.1.3) gives for a site it won't let through
+const isSink = (ip) => ip === "0.0.0.0" || ip === "::" || ip === "::0" || /^0+(:0+)*$/.test(String(ip));
+async function sinkholed(host) {
+  try {
+    const r = await dns.lookup(host, { all: !0 });
+    return r.length > 0 && r.every((x) => isSink(x.address));
+  } catch {
+    return !1;
+  }
+}
+// search engines: always ask for strict safe search (a guest can't turn it off from inside the page, since every page they open is rewritten)
+function safeSearchUrl(str) {
+  let u;
+  try {
+    u = new URL(str);
+  } catch {
+    return null;
+  }
+  const h = normHost(u.hostname);
+  let k = "",
+    v = "";
+  if (/^(html\.|lite\.)?duckduckgo\.com$/.test(h) && (u.searchParams.has("q") || /^\/(html|lite)/.test(u.pathname))) ((k = "kp"), (v = "1"));
+  else if (/(^|\.)google\.[a-z.]{2,6}$/.test(h) && /^\/(search|images|webhp)/.test(u.pathname)) ((k = "safe"), (v = "active"));
+  else if (/(^|\.)bing\.com$/.test(h) && /^\/(search|images|videos)/.test(u.pathname)) ((k = "adlt"), (v = "strict"));
+  else return null;
+  if (u.searchParams.get(k) === v) return null;
+  u.searchParams.set(k, v);
+  return u.toString();
 }
 const NOTE_PAGE = (t, b) => "<!doctype html><meta charset=utf-8><title>" + t + "</title><meta name=viewport content='width=device-width'><body style=\"margin:0;display:flex;align-items:center;justify-content:center;height:100vh;background:#14161c;color:#eef1f6;font:16px/1.5 system-ui,sans-serif;text-align:center\"><div style=\"max-width:420px;padding:24px\"><h2 style=\"margin:0 0 8px\">" + t + "</h2><p style=\"margin:0;color:#aab3c2\">" + b + "</p></div></body>";
 
@@ -151,6 +180,11 @@ function create(opts) {
         return res.end("Not allowed.");
       }
       const addr = u.protocol === "http:" ? await publicAddr(u.hostname, allowLocal) : "";
+      if (!addr && S && S.policy && (await sinkholed(u.hostname))) {
+        S.refused = (S.refused || 0) + 1;
+        res.writeHead(403, { "Content-Type": "text/plain" });
+        return res.end("Not allowed.");
+      }
       if (!addr) {
         S && S.blocked++;
         S && (S.lastBlocked = u.hostname);
@@ -173,6 +207,11 @@ function create(opts) {
         return;
       }
       const addr = m ? await publicAddr(m[1], allowLocal) : "";
+      if (!addr && m && S && S.policy && (await sinkholed(m[1]))) {
+        S.refused = (S.refused || 0) + 1;
+        sock.end("HTTP/1.1 403 Forbidden\r\n\r\n");
+        return;
+      }
       if (!addr || +m[2] > 65535) {
         S && S.blocked++;
         S && m && (S.lastBlocked = m[1]);
@@ -382,13 +421,17 @@ function create(opts) {
       if (sess.policy) {
         // no files in (the file chooser is held and never answered), and every page the guest opens is checked
         await pg.send("Page.setInterceptFileChooserDialog", { enabled: !0 }).catch(() => {});
-        pg.on("Fetch.requestPaused", (p) => {
+        pg.on("Fetch.requestPaused", async (p) => {
           let h = "";
           try {
             h = new URL(p.request.url).hostname;
           } catch {}
-          const why = !h ? "" : hostBlocked(h) ? "cat" : sess.policy.only && !hostListed(sess.policy.only, h) ? "list" : "";
-          if (!why) return void pg.send("Fetch.continueRequest", { requestId: p.requestId }).catch(() => {});
+          let why = !h ? "" : hostBlocked(h) ? "cat" : sess.policy.only && !hostListed(sess.policy.only, h) ? "list" : "";
+          if (!why && h && !/^[\d.]+$/.test(h) && (await sinkholed(h))) why = "cat";
+          if (!why) {
+            const ss = safeSearchUrl(p.request.url);
+            return void pg.send("Fetch.continueRequest", ss ? { requestId: p.requestId, url: ss } : { requestId: p.requestId }).catch(() => {});
+          }
           sess.refused = (sess.refused || 0) + 1;
           const page = why === "list" ? NOTE_PAGE("That site isn't on the list", "The owner only lets this browser open the sites on their list.") : NOTE_PAGE("Not allowed here", "This kind of site is blocked for guests.");
           pg.send("Fetch.fulfillRequest", { requestId: p.requestId, responseCode: 200, responseHeaders: [{ name: "Content-Type", value: "text/html; charset=utf-8" }], body: Buffer.from(page).toString("base64") }).catch(() => {});
@@ -523,4 +566,4 @@ function create(opts) {
   return { start, stop, go, input, resize, frame, state, active: () => S };
 }
 
-module.exports = { create, findExe, privIp, publicAddr, normUrl, hostBlocked, hostListed, normHost };
+module.exports = { create, findExe, privIp, publicAddr, normUrl, hostBlocked, hostListed, normHost, safeSearchUrl, sinkholed };
