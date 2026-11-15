@@ -1,6 +1,6 @@
 {
  "version": "1.19.0",
- "app": "6.39.0",
+ "app": "6.40.0",
  "files": {
   "server.js": "f0757ca2dbcf0df78c1cd8aafa9778f585bdbaad0c451d208c73e6824cdaa40c",
   "browser.js": "b0a784e91457c887f05b7555c844941ded1fa73c8eb41e023d44c64504920d11",
