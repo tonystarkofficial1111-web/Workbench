@@ -18,7 +18,7 @@ const http = require("http"),
   { readTags } = require("./tags.js"),
   { __wbReminders } = require("./reminders.js");
 
-const VERSION = "1.21.1";
+const VERSION = "1.21.2";
 const HOME = process.env.WB_HUB_HOME || path.join(__dirname, "..");
 const CONF = process.env.WB_HUB_CONFIG || path.join(HOME, "hub.json");
 const APP = "https://tonystarkofficial1111-web.github.io";
@@ -2003,11 +2003,25 @@ async function goatTotal() {
 const GOAT = { at: 0, busy: !1, data: null };
 const goatCode = () => C.goatCode || C.countCode || "";
 const goatBase = () => process.env.WB_GOAT_URL || "https://" + goatCode() + ".goatcounter.com";
+// q: one set of parameters, or a list to try in turn: a 400 ("bad request") from GoatCounter means it didn't like one of
+// them, so the next, plainer set is tried (down to none at all, which GoatCounter answers with its default last week)
 async function goatApi(p, q) {
+  const sets = Array.isArray(q) ? q : [q || {}];
+  let last = null;
+  for (let i = 0; i < sets.length; i++) {
+    last = await goatCall(p, sets[i]);
+    if (last.status !== 400 || i === sets.length - 1) break;
+  }
+  return goatResult(p, last);
+}
+async function goatCall(p, q) {
   const u = new URL(goatBase() + "/api/v0/" + p);
   for (const [k, v] of Object.entries(q || {})) u.searchParams.set(k, v);
   const r = await fetch(u, { headers: { Authorization: "Bearer " + C.goatToken, Accept: "application/json" }, signal: AbortSignal.timeout(15000) });
-  const text = await r.text().catch(() => ""),
+  return { status: r.status, ok: r.ok, text: await r.text().catch(() => ""), url: u };
+}
+async function goatResult(p, r) {
+  const text = r.text,
     snip = text.replace(/\s+/g, " ").slice(0, 160);
   if (r.status === 401 || r.status === 403) throw new Error("GoatCounter refused the API key (it needs the “Read statistics” permission)" + (snip ? ". It said: " + snip : ""));
   if (r.status === 404) {
@@ -2018,7 +2032,7 @@ async function goatApi(p, q) {
     } catch {}
     throw new Error(exists ? "the site “" + goatCode() + "” exists, but GoatCounter's API answered 404 for " + p + (snip ? ". It said: " + snip : "") : "GoatCounter doesn't know a site called “" + goatCode() + "”. Check the address you see your visitors at: the part before .goatcounter.com is the site code");
   }
-  if (!r.ok) throw new Error("GoatCounter answered " + r.status + " for " + p + (snip ? ". It said: " + snip : ""));
+  if (!r.ok) throw new Error("GoatCounter answered " + r.status + " for " + p + " (" + (r.url.search || "no options") + ")" + (snip ? ". It said: " + snip : ""));
   try {
     return { j: JSON.parse(text), raw: text };
   } catch {
@@ -2043,7 +2057,9 @@ async function goatRefresh(force) {
   const day = (t) => new Date(t).toISOString().slice(0, 10),
     end = new Date(),
     start = new Date(end.getTime() - 29 * 864e5),
-    q = { start: day(start) + "T00:00:00Z", end: day(end) + "T23:59:59Z" },
+    iso = (d) => d.toISOString().replace(/\.\d+Z$/, "Z"),
+    range = { start: day(start) + "T00:00:00Z", end: iso(end) },
+    qs = [range, { start: range.start }, {}],
     out = { ok: !0, at: Date.now(), days: [], total: 0, pages: [], refs: [], places: [], browsers: [], errs: [], sample: "" };
   const step = async (name, fn) => {
     try {
@@ -2053,7 +2069,7 @@ async function goatRefresh(force) {
     }
   };
   await step("visitors", async () => {
-    const { j, raw } = await goatApi("stats/total", Object.assign({ daily: "true" }, q));
+    const { j, raw } = await goatApi("stats/total", [Object.assign({ daily: "true" }, range), range, { start: range.start }, {}]);
     out.sample = raw.slice(0, 500);
     const rows = Array.isArray(j.stats) ? j.stats : [],
       by = {};
@@ -2068,10 +2084,10 @@ async function goatRefresh(force) {
     }
     out.total = gcNum(j, "total", "total_unique", "count") || out.days.reduce((a, b) => a + b.n, 0);
   });
-  await step("pages", async () => (out.pages = gcRows((await goatApi("stats/hits", Object.assign({ limit: "5" }, q))).j, ["path", "title", "name"])));
-  await step("sources", async () => (out.refs = gcRows((await goatApi("stats/toprefs", q)).j, ["name", "ref", "id"])));
-  await step("countries", async () => (out.places = gcRows((await goatApi("stats/locations", q)).j, ["name", "id", "country"])));
-  await step("browsers", async () => (out.browsers = gcRows((await goatApi("stats/browsers", q)).j, ["name", "id", "browser"])));
+  await step("pages", async () => (out.pages = gcRows((await goatApi("stats/hits", [Object.assign({ limit: "5" }, range), range, { start: range.start }, {}])).j, ["path", "title", "name"])));
+  await step("sources", async () => (out.refs = gcRows((await goatApi("stats/toprefs", qs)).j, ["name", "ref", "id"])));
+  await step("countries", async () => (out.places = gcRows((await goatApi("stats/locations", qs)).j, ["name", "id", "country"])));
+  await step("browsers", async () => (out.browsers = gcRows((await goatApi("stats/browsers", qs)).j, ["name", "id", "browser"])));
   out.ok = out.days.length > 0;
   GOAT.data = out;
   GOAT.at = Date.now();
