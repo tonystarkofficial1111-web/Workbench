@@ -18,7 +18,7 @@ const http = require("http"),
   { readTags } = require("./tags.js"),
   { __wbReminders } = require("./reminders.js");
 
-const VERSION = "1.21.2";
+const VERSION = "1.21.3";
 const HOME = process.env.WB_HUB_HOME || path.join(__dirname, "..");
 const CONF = process.env.WB_HUB_CONFIG || path.join(HOME, "hub.json");
 const APP = "https://tonystarkofficial1111-web.github.io";
@@ -2087,7 +2087,6 @@ async function goatRefresh(force) {
   await step("pages", async () => (out.pages = gcRows((await goatApi("stats/hits", [Object.assign({ limit: "5" }, range), range, { start: range.start }, {}])).j, ["path", "title", "name"])));
   await step("sources", async () => (out.refs = gcRows((await goatApi("stats/toprefs", qs)).j, ["name", "ref", "id"])));
   await step("countries", async () => (out.places = gcRows((await goatApi("stats/locations", qs)).j, ["name", "id", "country"])));
-  await step("browsers", async () => (out.browsers = gcRows((await goatApi("stats/browsers", qs)).j, ["name", "id", "browser"])));
   out.ok = out.days.length > 0;
   GOAT.data = out;
   GOAT.at = Date.now();
