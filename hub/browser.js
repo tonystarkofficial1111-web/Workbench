@@ -140,21 +140,23 @@ const NOTE_PAGE = (t, b) => "<!doctype html><meta charset=utf-8><title>" + t + "
 function create(opts) {
   const log = opts.log || (() => {}),
     allowLocal = !!(opts.allowLocal || process.env.WB_BROWSER_ALLOW_LOCAL);
-  let S = null,
-    starting = !1;
+  // (1.22.0) several people at once, up to opts.max() (5 unless the owner changed it): one browser window each
+  const SESS = new Map(),
+    starts = new Set(),
+    maxSess = () => Math.max(1, Math.min(10, Math.round(+(opts.max && opts.max()) || 5)));
   // profiles left behind if the Hub was stopped while someone had the browser open
   try {
     for (const n of fs.readdirSync(os.tmpdir())) /^wb-browser-[0-9a-f]{12}$/.test(n) && fs.rmSync(path.join(os.tmpdir(), n), { recursive: !0, force: !0 });
   } catch {}
   process.on("exit", () => {
     try {
-      S && S.proc.kill();
+      for (const x of SESS.values()) x.proc.kill();
     } catch {}
   });
 
   // ---- the filter every request goes through ----
   // (1.11.0) trying to reach a private address goes in the rule log: once, then at most every 5 minutes
-  function blockNote() {
+  function blockNote(S) {
     if (S && opts.onBlock && Date.now() - (S.blockAt || 0) > 300000) {
       S.blockAt = Date.now();
       try {
@@ -162,7 +164,7 @@ function create(opts) {
       } catch {}
     }
   }
-  function makeProxy() {
+  function makeProxy(R) {
     const srv = http.createServer(async (req, res) => {
       req.on("error", () => {});
       res.on("error", () => {});
@@ -174,21 +176,21 @@ function create(opts) {
         res.writeHead(400);
         return res.end();
       }
-      if (S && S.policy && hostBlocked(u.hostname)) {
-        S.refused = (S.refused || 0) + 1;
+      if (R.s && R.s.policy && hostBlocked(u.hostname)) {
+        R.s.refused = (R.s.refused || 0) + 1;
         res.writeHead(403, { "Content-Type": "text/plain" });
         return res.end("Not allowed.");
       }
       const addr = u.protocol === "http:" ? await publicAddr(u.hostname, allowLocal) : "";
-      if (!addr && S && S.policy && (await sinkholed(u.hostname))) {
-        S.refused = (S.refused || 0) + 1;
+      if (!addr && R.s && R.s.policy && (await sinkholed(u.hostname))) {
+        R.s.refused = (R.s.refused || 0) + 1;
         res.writeHead(403, { "Content-Type": "text/plain" });
         return res.end("Not allowed.");
       }
       if (!addr) {
-        S && S.blocked++;
-        S && (S.lastBlocked = u.hostname);
-        blockNote();
+        R.s && R.s.blocked++;
+        R.s && (R.s.lastBlocked = u.hostname);
+        blockNote(R.s);
         res.writeHead(403, { "Content-Type": "text/plain" });
         return res.end("Blocked: the rig's browser only reaches the public internet.");
       }
@@ -201,21 +203,21 @@ function create(opts) {
     srv.on("connect", async (req, sock, head) => {
       sock.on("error", () => {}); // the browser hanging up mustn't take the Hub down
       const m = /^(\[[^\]]+\]|[^:]+):(\d+)$/.exec(req.url || "");
-      if (m && S && S.policy && hostBlocked(m[1])) {
-        S.refused = (S.refused || 0) + 1;
+      if (m && R.s && R.s.policy && hostBlocked(m[1])) {
+        R.s.refused = (R.s.refused || 0) + 1;
         sock.end("HTTP/1.1 403 Forbidden\r\n\r\n");
         return;
       }
       const addr = m ? await publicAddr(m[1], allowLocal) : "";
-      if (!addr && m && S && S.policy && (await sinkholed(m[1]))) {
-        S.refused = (S.refused || 0) + 1;
+      if (!addr && m && R.s && R.s.policy && (await sinkholed(m[1]))) {
+        R.s.refused = (R.s.refused || 0) + 1;
         sock.end("HTTP/1.1 403 Forbidden\r\n\r\n");
         return;
       }
       if (!addr || +m[2] > 65535) {
-        S && S.blocked++;
-        S && m && (S.lastBlocked = m[1]);
-        blockNote();
+        R.s && R.s.blocked++;
+        R.s && m && (R.s.lastBlocked = m[1]);
+        blockNote(R.s);
         sock.end("HTTP/1.1 403 Forbidden\r\n\r\n");
         return;
       }
@@ -323,20 +325,19 @@ function create(opts) {
     await s.pg.send("Page.startScreencast", { format: "jpeg", quality: 55, maxWidth: w, maxHeight: h, everyNthFrame: 1 });
   }
   async function start(user, cfg, policy) {
-    if (S) {
-      if (S.user.id === user.id) return state(user);
-      throw Object.assign(new Error(S.user.name + " is using the rig's browser right now."), { code: 409 });
-    }
-    if (starting) throw Object.assign(new Error("The rig's browser is starting. Try again in a moment."), { code: 409 });
+    if (SESS.has(user.id)) return state(user);
+    if (starts.has(user.id)) throw Object.assign(new Error("The rig's browser is starting. Try again in a moment."), { code: 409 });
+    if (SESS.size + starts.size >= maxSess()) throw Object.assign(new Error("The rig's browser is full right now (" + maxSess() + " people are using it). Try again in a few minutes."), { code: 409 });
     const exe = findExe(cfg && cfg.exe);
     if (!exe) throw Object.assign(new Error("The rig has no Edge or Chrome to use. Install Microsoft Edge or Google Chrome on the rig."), { code: 400 });
     if (os.freemem() < 0.9e9) throw Object.assign(new Error("The rig is low on memory right now (under 1 GB free). Try again later, or close something on the rig."), { code: 503 });
-    starting = !0;
+    starts.add(user.id);
+    const R = { s: null };
     let proc = null,
       proxy = null,
       dir = "";
     try {
-      proxy = await makeProxy();
+      proxy = await makeProxy(R);
       const port = await freePort(),
         id = crypto.randomBytes(6).toString("hex");
       dir = path.join(os.tmpdir(), "wb-browser-" + id);
@@ -383,11 +384,11 @@ function create(opts) {
       if (!page) throw new Error("The browser has no page.");
       const br = await cdp(ver.webSocketDebuggerUrl),
         pg = await cdp(page.webSocketDebuggerUrl);
-      S = { user: { id: user.id, name: user.name }, targetId: page.id, id, proc, proxy, dir, br, pg, port, at: Date.now(), seen: Date.now(), url: "about:blank", title: "", host: "", n: 0, frame: null, waiters: [], blocked: 0, lastBlocked: "", w: 1280, h: 720, fw: 1280, fh: 720 };
-      const sess = S;
+      const sess = (R.s = { user: { id: user.id, name: user.name }, targetId: page.id, id, proc, proxy, dir, br, pg, port, at: Date.now(), seen: Date.now(), url: "about:blank", title: "", host: "", n: 0, frame: null, waiters: [], blocked: 0, lastBlocked: "", w: 1280, h: 720, fw: 1280, fh: 720 });
+      SESS.set(user.id, sess);
       sess.policy = policy || null;
-      proc.on("exit", () => S === sess && stop("The browser closed."));
-      pg.onclose = () => S === sess && stop("The browser closed.");
+      proc.on("exit", () => SESS.get(user.id) === sess && stop("The browser closed.", sess));
+      pg.onclose = () => SESS.get(user.id) === sess && stop("The browser closed.", sess);
       pg.on("Page.screencastFrame", (p) => {
         pg.send("Page.screencastFrameAck", { sessionId: p.sessionId }).catch(() => {});
         sess.frame = Buffer.from(p.data, "base64");
@@ -439,7 +440,7 @@ function create(opts) {
         await pg.send("Fetch.enable", { patterns: [{ urlPattern: "*", resourceType: "Document", requestStage: "Request" }] });
         if (sess.policy.minutes) {
           sess.endsAt = Date.now() + sess.policy.minutes * 60000;
-          sess.cap = setTimeout(() => S === sess && stop("The " + sess.policy.minutes + " minutes ran out."), sess.policy.minutes * 60000);
+          sess.cap = setTimeout(() => SESS.get(user.id) === sess && stop("The " + sess.policy.minutes + " minutes ran out.", sess), sess.policy.minutes * 60000);
         }
       }
       // links that want a new window open here instead (there is only one window)
@@ -447,8 +448,8 @@ function create(opts) {
       await pg.send("Emulation.setFocusEmulationEnabled", { enabled: !0 }).catch(() => {});
       await pg.send("Page.bringToFront").catch(() => {});
       await setSize(sess, 1280, 720);
-      sess.tt = setInterval(() => S === sess && pg.send("Runtime.evaluate", { expression: "document.title" }).then((r) => (sess.title = String((r.result && r.result.value) || "").slice(0, 120))).catch(() => {}), 3000);
-      sess.idle = setInterval(() => S === sess && Date.now() - sess.seen > (opts.idleMs || 10 * 60000) && stop("It was idle for 10 minutes."), 15000);
+      sess.tt = setInterval(() => SESS.get(user.id) === sess && pg.send("Runtime.evaluate", { expression: "document.title" }).then((r) => (sess.title = String((r.result && r.result.value) || "").slice(0, 120))).catch(() => {}), 3000);
+      sess.idle = setInterval(() => SESS.get(user.id) === sess && Date.now() - sess.seen > (opts.idleMs || 10 * 60000) && stop("It was idle for 10 minutes.", sess), 15000);
       log("Browser started for", user.name);
       return state(user);
     } catch (e) {
@@ -456,16 +457,18 @@ function create(opts) {
         proc && proc.kill();
         proxy && proxy.close();
       } catch {}
-      if (S && S.proc === proc) S = null;
+      if (R.s && SESS.get(user.id) === R.s) SESS.delete(user.id);
       throw Object.assign(new Error(e.message || "The browser didn't start."), { code: e.code || 500 });
     } finally {
-      starting = !1;
+      starts.delete(user.id);
     }
   }
-  function stop(why) {
-    const s = S;
-    if (!s) return;
-    S = null;
+  // stop(why) closes every window; stop(why, user id) one person's; stop(why, session) that window
+  function stop(why, who) {
+    if (who === void 0) return void [...SESS.values()].forEach((x) => stop(why, x));
+    const s = typeof who === "string" ? SESS.get(who) : who;
+    if (!s || SESS.get(s.user.id) !== s) return;
+    SESS.delete(s.user.id);
     clearInterval(s.idle);
     clearInterval(s.tt);
     clearTimeout(s.cap);
@@ -495,11 +498,13 @@ function create(opts) {
     opts.onStop && opts.onStop(s.user, why || "");
   }
   function state(user) {
-    const exe = findExe(opts.exe && opts.exe());
-    return { available: !!exe, active: S ? { user: S.user.name, since: S.at, host: S.host, mine: !!user && S.user.id === user.id, blocked: S.blocked, lastBlocked: S.lastBlocked, endsAt: S.endsAt || 0, refused: S.refused || 0, limited: !!S.policy } : null, url: S ? S.url : "", title: S ? S.title : "", w: S ? S.w : 0, h: S ? S.h : 0, n: S ? S.n : 0 };
+    const exe = findExe(opts.exe && opts.exe()),
+      S = (user && SESS.get(user.id)) || null;
+    return { inUse: SESS.size, max: maxSess(), full: SESS.size + starts.size >= maxSess() && !S, available: !!exe, active: S ? { user: S.user.name, since: S.at, host: S.host, mine: !!user && S.user.id === user.id, blocked: S.blocked, lastBlocked: S.lastBlocked, endsAt: S.endsAt || 0, refused: S.refused || 0, limited: !!S.policy } : null, url: S ? S.url : "", title: S ? S.title : "", w: S ? S.w : 0, h: S ? S.h : 0, n: S ? S.n : 0 };
   }
   const mine = (user) => {
-    if (!S || S.user.id !== user.id) throw Object.assign(new Error("You don't have the rig's browser open."), { code: 409 });
+    const S = SESS.get(user.id);
+    if (!S) throw Object.assign(new Error("You don't have the rig's browser open."), { code: 409 });
     S.seen = Date.now();
     return S;
   };
@@ -558,12 +563,12 @@ function create(opts) {
   async function frame(user, n, waitMs) {
     let s = mine(user);
     if (s.n <= n && waitMs) await new Promise((ok) => (s.waiters.push(ok), setTimeout(ok, waitMs)));
-    s = S;
-    if (!s || s.user.id !== user.id) throw Object.assign(new Error("The rig's browser closed."), { code: 409 });
+    s = SESS.get(user.id);
+    if (!s) throw Object.assign(new Error("The rig's browser closed."), { code: 409 });
     s.seen = Date.now();
     return { n: s.n, buf: s.n > n ? s.frame : null, url: s.url, title: s.title, w: s.fw || s.w, h: s.fh || s.h };
   }
-  return { start, stop, go, input, resize, frame, state, active: () => S };
+  return { start, stop, go, input, resize, frame, state, all: () => [...SESS.values()], active: () => [...SESS.values()][0] || null };
 }
 
 module.exports = { create, findExe, privIp, publicAddr, normUrl, hostBlocked, hostListed, normHost, safeSearchUrl, sinkholed };

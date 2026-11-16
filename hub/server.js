@@ -18,7 +18,7 @@ const http = require("http"),
   { readTags } = require("./tags.js"),
   { __wbReminders } = require("./reminders.js");
 
-const VERSION = "1.21.4";
+const VERSION = "1.22.0";
 const HOME = process.env.WB_HUB_HOME || path.join(__dirname, "..");
 const CONF = process.env.WB_HUB_CONFIG || path.join(HOME, "hub.json");
 const APP = "https://tonystarkofficial1111-web.github.io";
@@ -2142,6 +2142,7 @@ try {
   BRW = require("./browser.js").create({
     log,
     exe: () => (C.browser && C.browser.exe) || "",
+    max: () => (C.browser && C.browser.max) || 5,
     onVisit: (host, u) => {
       // only the host name is kept (not the page or what was typed): who, when, which site
       const L = readJson(hubf("browser-log.json"), { visits: [] });
@@ -2201,12 +2202,12 @@ function brStats() {
     week = keys.slice(-7),
     today = S.days[brDay()] || { sites: 0, people: [] },
     ppl = new Set(),
-    act = BRW && BRW.active && BRW.active();
+    all = BRW && BRW.all ? BRW.all() : [];
   week.forEach((k) => S.days[k].people.forEach((n) => ppl.add(n)));
   const days = [];
   for (let i = 6; i >= 0; i--) days.push((S.days[brDay(Date.now() - i * 864e5)] || { sites: 0 }).sites);
   const G = guestLoad().guests;
-  return { on: brOn(), module: !!BRW, usingNow: act ? act.user.name : "", sitesToday: today.sites, peopleToday: today.people.length, sitesWeek: days.reduce((a, b) => a + b, 0), peopleWeek: ppl.size, days, guests: G.filter((g) => !g.revoked && g.exp > Date.now()).length, pub: !!brLimits().pub.on, pubPeople: Object.keys(pbuLoad().users).length };
+  return { on: brOn(), module: !!BRW, usingNow: all.map((x) => x.user.name).join(", "), inUse: all.length, max: BRW && BRW.state ? BRW.state(null).max : 5, sitesToday: today.sites, peopleToday: today.people.length, sitesWeek: days.reduce((a, b) => a + b, 0), peopleWeek: ppl.size, days, guests: G.filter((g) => !g.revoked && g.exp > Date.now()).length, pub: !!brLimits().pub.on, pubPeople: Object.keys(pbuLoad().users).length };
 }
 // ---- guest codes (1.18.0): someone with no Hub account gets the rig's browser and nothing else.
 // The owner makes a code on the rig. It holds the public Funnel address and a secret key, scrambled into one
@@ -2272,7 +2273,7 @@ async function guestBrowserApi(req, res, url, P, u, G) {
     st = () => Object.assign(BRW ? BRW.state(u) : { available: !1, active: null }, { ack: !!G.ack(), on: brOn(), can: !0, allowed: brOn(), module: !!BRW, limits: brPolicyView(u) });
   if (P === "/state") return json(res, 200, st());
   if (P === "/ack" && M === "POST") return (G.setAck(), json(res, 200, st()));
-  if (P === "/stop" && M === "POST") return (BRW && BRW.active() && BRW.active().user.id === u.id && BRW.stop("Closed."), json(res, 200, st()));
+  if (P === "/stop" && M === "POST") return (BRW && BRW.stop("Closed.", u.id), json(res, 200, st()));
   if (!BRW || !brOn()) return fail(res, 403, "The rig's browser isn't available.");
   if (P === "/start" && M === "POST") {
     if (!G.ack()) return fail(res, 409, "Read the notice about the rig's browser first.");
@@ -2324,7 +2325,7 @@ async function pubDoor(req, res, rest, url) {
   if (req.method === "OPTIONS") return (res.writeHead(204), res.end());
   const L = brLimits(),
     now = Date.now();
-  if (rest === "/state") return json(res, 200, L.pub.on && BRW && brOn() ? { on: !0, minutes: L.pub.minutes, cooldown: L.pub.cooldown, daily: L.pub.daily, onlyListed: !!L.pub.onlyListed, sites: L.pub.onlyListed ? brSites(L) : [], busy: !!(BRW && BRW.active()) } : { on: !1 });
+  if (rest === "/state") return json(res, 200, L.pub.on && BRW && brOn() ? { on: !0, minutes: L.pub.minutes, cooldown: L.pub.cooldown, daily: L.pub.daily, onlyListed: !!L.pub.onlyListed, sites: L.pub.onlyListed ? brSites(L) : [], busy: !!(BRW && BRW.state(null).full) } : { on: !1 });
   if (!L.pub.on || !BRW || !brOn()) return fail(res, 404, "Free browsing isn't on right now.");
   if (rest === "/join") {
     if (req.method !== "POST") return fail(res, 405, "Not here.");
@@ -2777,7 +2778,7 @@ async function route(req, res) {
         if (x.role === "owner") return fail(res, 400, "The owner can't be changed or removed here.");
         if (M === "PATCH") {
           "work" in b && (x.work = !!b.work);
-          "browser" in b && ((x.browser = !!b.browser), !x.browser && BRW && BRW.active() && BRW.active().user.id === x.id && BRW.stop("Turned off by the owner."));
+          "browser" in b && ((x.browser = !!b.browser), !x.browser && BRW && BRW.stop("Turned off by the owner.", x.id));
           "artist" in b && (x.artist = !!b.artist);
           b.pin && setPin(x, b.pin);
           saveUsers();
@@ -3176,10 +3177,10 @@ async function route(req, res) {
         (nl.pub.cooldown !== cur.pub.cooldown || nl.guest.cooldown !== cur.guest.cooldown) && brCool.clear();
         if (b.ban) {
           const X = pbuLoad().users[String(b.ban.id)];
-          X && ((X.banned = b.ban.on ? Date.now() : 0), pbuSave(), b.ban.on && BRW && BRW.active() && BRW.active().user.id === "p:" + b.ban.id && BRW.stop("The owner turned this account off."));
+          X && ((X.banned = b.ban.on ? Date.now() : 0), pbuSave(), b.ban.on && BRW && BRW.stop("The owner turned this account off.", "p:" + b.ban.id));
         }
         writeJson(CONF, C);
-        !nl.pub.on && BRW && BRW.active() && BRW.active().user.id[0] === "p" && BRW.stop("Free browsing was switched off.");
+        !nl.pub.on && BRW && BRW.all().filter((x) => x.user.id[0] === "p").forEach((x) => BRW.stop("Free browsing was switched off.", x));
         log("Browser limits changed" + (b.pub && "on" in b.pub ? " · public " + (nl.pub.on ? "on" : "off") : ""));
       }
       return json(res, 200, brLimitsView());
@@ -3196,7 +3197,7 @@ async function route(req, res) {
       if (!g) return fail(res, 404, "No such guest code.");
       b.remove ? (GST.guests = GST.guests.filter((x) => x !== g)) : (g.revoked = Date.now());
       for (const [k, v] of GSESS) v.gid === g.id && GSESS.delete(k);
-      BRW && BRW.active() && BRW.active().user.id === "g:" + g.id && BRW.stop("The owner ended the guest code.");
+      BRW && BRW.stop("The owner ended the guest code.", "g:" + g.id);
       guestSave();
       log("Guest code", b.remove ? "removed:" : "revoked:", g.name);
       return json(res, 200, { guests: GST.guests.map(guestView) });
@@ -3299,7 +3300,7 @@ async function route(req, res) {
     }
     case "/api/browser/stop":
       if (M !== "POST") break;
-      if (BRW && BRW.active() && (BRW.active().user.id === u.id || owner)) BRW.stop(BRW.active().user.id === u.id ? "Closed." : "Closed by the owner.");
+      BRW && BRW.stop("Closed.", u.id);
       return json(res, 200, brState(u));
     case "/api/browser/go":
     case "/api/browser/input":
