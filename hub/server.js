@@ -18,7 +18,7 @@ const http = require("http"),
   { readTags } = require("./tags.js"),
   { __wbReminders } = require("./reminders.js");
 
-const VERSION = "1.21.3";
+const VERSION = "1.21.4";
 const HOME = process.env.WB_HUB_HOME || path.join(__dirname, "..");
 const CONF = process.env.WB_HUB_CONFIG || path.join(HOME, "hub.json");
 const APP = "https://tonystarkofficial1111-web.github.io";
@@ -3018,6 +3018,33 @@ async function route(req, res) {
       log("Anywhere key made:", name);
       pubEvent("remote", "Made a key: " + name, k.full ? "The AI, and sign-in with a name and PIN" : "The AI only");
       return json(res, 200, Object.assign(remoteView(), { made: k.id }));
+    }
+    case "/api/mklinks": {
+      // the owner's saved marketing links (Developer options, Marketing sheet): kept here so every device sees the same list.
+      // A device sends what it has; the newest edit of each link wins, and a deleted link stays deleted.
+      if (!rigCtl(req, a)) return ctlNo(res);
+      const f = hubf("mklinks.json"),
+        D = readJson(f, { links: [], gone: {} });
+      D.links = Array.isArray(D.links) ? D.links : [];
+      D.gone = D.gone && typeof D.gone === "object" ? D.gone : {};
+      if (M === "POST") {
+        const b = await jsonBody(req, 400000),
+          by = new Map(D.links.map((l) => [l.id, l])),
+          cl = (v, n) => String(v == null ? "" : v).slice(0, n);
+        for (const id in b.gone || {}) D.gone[cl(id, 40)] = +b.gone[id] || Date.now();
+        for (const l of (Array.isArray(b.links) ? b.links : []).slice(0, 500)) {
+          if (!l || !l.id) continue;
+          const c = { id: cl(l.id, 40), name: cl(l.name, 120), note: cl(l.note, 600), url: cl(l.url, 400), tag: cl(l.tag, 60), game: cl(l.game, 20), where: cl(l.where, 20), made: +l.made || Date.now(), at: +l.at || Date.now() },
+            o = by.get(c.id);
+          if (!o || c.at >= (o.at || 0)) by.set(c.id, c);
+        }
+        for (const id in D.gone) by.delete(id);
+        D.links = [...by.values()].sort((x, y) => y.made - x.made).slice(0, 500);
+        const keep = Object.entries(D.gone).sort((x, y) => y[1] - x[1]).slice(0, 1000);
+        D.gone = Object.fromEntries(keep);
+        writeJson(f, D);
+      }
+      return json(res, 200, D);
     }
     case "/api/traffic": {
       // only the owner, on the rig or on a paired phone
