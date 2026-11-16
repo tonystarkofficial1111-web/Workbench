@@ -1,8 +1,8 @@
 {
- "version": "1.21.0",
- "app": "6.42.1",
+ "version": "1.21.1",
+ "app": "6.42.2",
  "files": {
-  "server.js": "478d5627c00d8d3c98c415ae26e929b2e2ce9770055465f488f6b7a2ffb9280a",
+  "server.js": "eeedaf1bc9de2717696a084aea2b370f1684d817e1cfc148a98cf81f9d2f7883",
   "browser.js": "4db91a0569d700ab49173c13808fe16d27c2df71a5f76bf3c266f1ce61dae40a",
   "README.md": "28f52fdf567fbdde5c8eb65e101f5cac75aff782eceb07960bf77b7dd4dc74df",
   "hub.ico": "877b7befcb15c507262b8b092545b740875f110d736193d21251d30e0aa6fdb2",
