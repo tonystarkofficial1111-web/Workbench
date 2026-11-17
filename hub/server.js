@@ -18,7 +18,7 @@ const http = require("http"),
   { readTags } = require("./tags.js"),
   { __wbReminders } = require("./reminders.js");
 
-const VERSION = "1.23.0";
+const VERSION = "1.24.0";
 const HOME = process.env.WB_HUB_HOME || path.join(__dirname, "..");
 const CONF = process.env.WB_HUB_CONFIG || path.join(HOME, "hub.json");
 const APP = "https://tonystarkofficial1111-web.github.io";
@@ -2163,6 +2163,7 @@ try {
     log,
     exe: () => (C.browser && C.browser.exe) || "",
     max: () => (C.browser && C.browser.max) || 5,
+    i2p: () => C.browser && C.browser.i2p,
     onVisit: (host, u) => {
       // only the host name is kept (not the page or what was typed): who, when, which site
       const L = readJson(hubf("browser-log.json"), { visits: [] });
@@ -2435,7 +2436,7 @@ async function guestDoor(req, res, key, rest, url) {
 }
 function brState(u) {
   const st = BRW ? BRW.state(u) : { available: !1, active: null };
-  return Object.assign(st, { ack: u.role === "owner" || !!u.brAck, on: brOn(), can: canBrowse(u), allowed: canBrowse(u) && brOn(), module: !!BRW, exe: u.role === "owner" ? (C.browser && C.browser.exe) || "" : undefined });
+  return Object.assign(st, { ack: u.role === "owner" || !!u.brAck, on: brOn(), can: canBrowse(u), allowed: canBrowse(u) && brOn(), module: !!BRW, exe: u.role === "owner" ? (C.browser && C.browser.exe) || "" : undefined, i2p: u.role === "owner" ? require("./browser.js").i2pCfg(C.browser && C.browser.i2p) : { on: require("./browser.js").i2pCfg(C.browser && C.browser.i2p).on } });
 }
 async function route(req, res) {
   const url = new URL(req.url, "http://hub"),
@@ -3161,6 +3162,13 @@ async function route(req, res) {
       C.browser = Object.assign({ on: !1, exe: "" }, C.browser);
       "on" in b && (C.browser.on = !!b.on);
       "exe" in b && (C.browser.exe = clip(b.exe, 300));
+      if (b.i2p && typeof b.i2p === "object") {
+        // I2P (1.24.0): the rig browser's traffic goes through the I2P router on this computer (loopback only, off by default)
+        const was = require("./browser.js").i2pCfg(C.browser.i2p).on;
+        C.browser.i2p = require("./browser.js").i2pCfg(Object.assign({}, C.browser.i2p, b.i2p));
+        log("Rig browser through I2P", C.browser.i2p.on ? "on" : "off");
+        was !== C.browser.i2p.on && BRW && BRW.stop(C.browser.i2p.on ? "The owner switched the browser to I2P." : "The owner switched the browser off I2P.");
+      }
       writeJson(CONF, C);
       !C.browser.on && BRW && BRW.stop("Switched off on the rig.");
       log("Rig browser", C.browser.on ? "on" : "off");
@@ -3204,6 +3212,10 @@ async function route(req, res) {
         log("Browser limits changed" + (b.pub && "on" in b.pub ? " · public " + (nl.pub.on ? "on" : "off") : ""));
       }
       return json(res, 200, brLimitsView());
+    }
+    case "/api/browser/i2pcheck": {
+      if (!rigCtl(req, a)) return ctlNo(res);
+      return json(res, 200, await require("./browser.js").i2pProbe(C.browser && C.browser.i2p));
     }
     case "/api/browser/dnscheck": {
       if (!rigCtl(req, a)) return ctlNo(res);

@@ -137,6 +137,45 @@ function safeSearchUrl(str) {
 }
 const NOTE_PAGE = (t, b) => "<!doctype html><meta charset=utf-8><title>" + t + "</title><meta name=viewport content='width=device-width'><body style=\"margin:0;display:flex;align-items:center;justify-content:center;height:100vh;background:#14161c;color:#eef1f6;font:16px/1.5 system-ui,sans-serif;text-align:center\"><div style=\"max-width:420px;padding:24px\"><h2 style=\"margin:0 0 8px\">" + t + "</h2><p style=\"margin:0;color:#aab3c2\">" + b + "</p></div></body>";
 
+// ---- I2P (1.24.0) -----------------------------------------------------------------------------------------
+// Optional: send the rig browser's traffic through the I2P network instead of straight out. I2P is a chain of other people's
+// computers, so it is slower and many sites are slow or fail (that is why it is off unless the owner turns it on). The owner
+// runs the I2P router on the rig; it listens on this computer only: 127.0.0.1:4444 for web pages (HTTP) and :4445 for HTTPS.
+// The rig never looks the name up itself in this mode (no local DNS), and names that only make sense on the rig's own network
+// are still refused, so a guest can't use this to reach the home network.
+const I2P_DEFAULT = { on: !1, host: "127.0.0.1", http: 4444, https: 4445 };
+function i2pCfg(c) {
+  c = Object.assign({}, I2P_DEFAULT, c || {});
+  const port = (v, d) => (Number.isInteger(+v) && +v >= 1 && +v <= 65535 ? +v : d);
+  return { on: !!c.on, host: /^(127\.0\.0\.1|localhost|\[?::1\]?)$/i.test(String(c.host || "")) ? "127.0.0.1" : "127.0.0.1", http: port(c.http, 4444), https: port(c.https, 4445) };
+}
+// a name is fine to send through I2P if it is a public-looking name or an .i2p address; private ranges and rig-only names never are
+function i2pTargetOk(host) {
+  host = String(host || "").toLowerCase().replace(/^\[|\]$/g, "").replace(/\.+$/, "");
+  if (!host || host.length > 253) return !1;
+  if (/\.i2p$/.test(host)) return /^[a-z0-9.-]+$/.test(host);
+  if (net.isIP(host)) return !isPrivateIp(host);
+  if (!host.includes(".")) return !1;
+  if (/(^|\.)(localhost|local|lan|home|internal|intranet|corp|home\.arpa|ts\.net|onion)$/.test(host)) return !1;
+  return /^[a-z0-9._-]+$/.test(host);
+}
+function isPrivateIp(ip) {
+  if (net.isIPv6(ip)) return /^(::1?$|f[cd]|fe[89ab]|::ffff:(10\.|127\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.))/i.test(ip) || ip === "::";
+  const p = ip.split(".").map(Number);
+  return p[0] === 0 || p[0] === 10 || p[0] === 127 || (p[0] === 169 && p[1] === 254) || (p[0] === 172 && p[1] >= 16 && p[1] <= 31) || (p[0] === 192 && p[1] === 168) || (p[0] === 100 && p[1] >= 64 && p[1] <= 127) || p[0] >= 224;
+}
+// is the I2P router answering on its two local ports?
+function i2pProbe(c) {
+  c = i2pCfg(c);
+  const one = (port) => new Promise((ok) => {
+    const s = net.connect({ host: c.host, port, timeout: 1500 }, () => (s.destroy(), ok(!0)));
+    s.on("error", () => ok(!1));
+    s.on("timeout", () => (s.destroy(), ok(!1)));
+  });
+  return Promise.all([one(c.http), one(c.https)]).then(([http, https]) => ({ http, https, host: c.host, httpPort: c.http, httpsPort: c.https }));
+}
+const I2P_DOWN = "I2P isn't answering on this computer. Start the I2P router on the rig (its web proxy is 127.0.0.1:4444), or turn I2P off in the Hub.";
+
 function create(opts) {
   const log = opts.log || (() => {}),
     allowLocal = !!(opts.allowLocal || process.env.WB_BROWSER_ALLOW_LOCAL);
@@ -181,6 +220,26 @@ function create(opts) {
         res.writeHead(403, { "Content-Type": "text/plain" });
         return res.end("Not allowed.");
       }
+      const I2 = i2pCfg(opts.i2p && opts.i2p());
+      if (I2.on) {
+        if (u.protocol !== "http:" || !i2pTargetOk(u.hostname)) {
+          R.s && R.s.blocked++;
+          R.s && (R.s.lastBlocked = u.hostname);
+          blockNote(R.s);
+          res.writeHead(403, { "Content-Type": "text/plain" });
+          return res.end("Blocked: through I2P the rig's browser only reaches public sites and .i2p addresses.");
+        }
+        const h2 = Object.assign({}, req.headers);
+        delete h2["proxy-connection"];
+        const pr2 = http.request({ host: I2.host, port: I2.http, method: req.method, path: req.url, headers: h2, timeout: 60000 }, (r) => (res.writeHead(r.statusCode, r.headers), r.pipe(res)));
+        pr2.on("timeout", () => pr2.destroy());
+        pr2.on("error", () => {
+          const sent = res.headersSent;
+          sent || res.writeHead(502, { "Content-Type": "text/plain" });
+          res.end(sent ? undefined : I2P_DOWN);
+        });
+        return req.pipe(pr2);
+      }
       const addr = u.protocol === "http:" ? await publicAddr(u.hostname, allowLocal) : "";
       if (!addr && R.s && R.s.policy && (await sinkholed(u.hostname))) {
         R.s.refused = (R.s.refused || 0) + 1;
@@ -206,6 +265,39 @@ function create(opts) {
       if (m && R.s && R.s.policy && hostBlocked(m[1])) {
         R.s.refused = (R.s.refused || 0) + 1;
         sock.end("HTTP/1.1 403 Forbidden\r\n\r\n");
+        return;
+      }
+      const I2 = i2pCfg(opts.i2p && opts.i2p());
+      if (I2.on) {
+        if (!m || +m[2] > 65535 || !i2pTargetOk(m[1])) {
+          R.s && R.s.blocked++;
+          R.s && m && (R.s.lastBlocked = m[1]);
+          blockNote(R.s);
+          return sock.end("HTTP/1.1 403 Forbidden\r\n\r\n");
+        }
+        // ask I2P's HTTPS proxy to open the tunnel, then pass the bytes both ways
+        const up2 = net.connect({ host: I2.host, port: I2.https, timeout: 60000 }, () => up2.write("CONNECT " + m[1] + ":" + m[2] + " HTTP/1.1\r\nHost: " + m[1] + ":" + m[2] + "\r\n\r\n"));
+        let buf = Buffer.alloc(0),
+          done = !1;
+        up2.on("data", (d) => {
+          if (done) return;
+          buf = Buffer.concat([buf, d]);
+          const e = buf.indexOf("\r\n\r\n");
+          if (e < 0) return buf.length > 8192 && (up2.destroy(), sock.destroy());
+          done = !0;
+          if (!/^HTTP\/1\.[01] 2\d\d/.test(buf.toString("latin1", 0, 20))) return (sock.end("HTTP/1.1 502 Bad Gateway\r\n\r\n"), up2.destroy());
+          sock.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+          head && head.length && up2.write(head);
+          const rest = buf.subarray(e + 4);
+          rest.length && sock.write(rest);
+          up2.removeAllListeners("data");
+          up2.pipe(sock);
+          sock.pipe(up2);
+        });
+        up2.on("timeout", () => up2.destroy());
+        up2.on("error", () => (done ? sock.destroy() : sock.end("HTTP/1.1 502 Bad Gateway\r\n\r\n")));
+        up2.on("close", () => sock.destroy());
+        sock.on("close", () => up2.destroy());
         return;
       }
       const addr = m ? await publicAddr(m[1], allowLocal) : "";
@@ -363,6 +455,7 @@ function create(opts) {
         "--window-size=1280,720",
         "about:blank",
       ];
+      if (i2pCfg(opts.i2p && opts.i2p()).on) args.push("--force-webrtc-ip-handling-policy=disable_non_proxied_udp", "--webrtc-ip-handling-policy=disable_non_proxied_udp");
       if (process.platform === "linux") args.push("--disable-dev-shm-usage", ...(process.getuid && process.getuid() === 0 ? ["--no-sandbox"] : []));
       proc = spawn(exe, args, { stdio: "ignore", windowsHide: !0 });
       proc.on("error", () => {});
@@ -568,7 +661,7 @@ function create(opts) {
     s.seen = Date.now();
     return { n: s.n, buf: s.n > n ? s.frame : null, url: s.url, title: s.title, w: s.fw || s.w, h: s.fh || s.h };
   }
-  return { start, stop, go, input, resize, frame, state, all: () => [...SESS.values()], active: () => [...SESS.values()][0] || null };
+  return { proxyForTest: makeProxy, start, stop, go, input, resize, frame, state, all: () => [...SESS.values()], active: () => [...SESS.values()][0] || null };
 }
 
-module.exports = { create, findExe, privIp, publicAddr, normUrl, hostBlocked, hostListed, normHost, safeSearchUrl, sinkholed };
+module.exports = { create, i2pCfg, i2pProbe, i2pTargetOk, findExe, privIp, publicAddr, normUrl, hostBlocked, hostListed, normHost, safeSearchUrl, sinkholed };
