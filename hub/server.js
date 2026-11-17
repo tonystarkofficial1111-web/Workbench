@@ -18,7 +18,7 @@ const http = require("http"),
   { readTags } = require("./tags.js"),
   { __wbReminders } = require("./reminders.js");
 
-const VERSION = "1.22.1";
+const VERSION = "1.23.0";
 const HOME = process.env.WB_HUB_HOME || path.join(__dirname, "..");
 const CONF = process.env.WB_HUB_CONFIG || path.join(HOME, "hub.json");
 const APP = "https://tonystarkofficial1111-web.github.io";
@@ -1530,11 +1530,19 @@ function acctCheck(t) {
 }
 function acctIndexPut(A) {
   const I = acctIndex(),
-    e = { id: A.id, email: A.email, name: A.name, created: A.created, seen: A.seen, size: A.size || 0, disk: A.disk || 0, prevDisk: A.prevDisk || 0 },
-    i = I.list.findIndex((x) => x.id === A.id);
+    i = I.list.findIndex((x) => x.id === A.id),
+    old = i < 0 ? {} : I.list[i],
+    // (1.23.0) how many times someone signed in with Google, and the total time they had Workbench open while signed in
+    e = { id: A.id, email: A.email, name: A.name, created: A.created, seen: A.seen, size: A.size || 0, disk: A.disk || 0, prevDisk: A.prevDisk || 0, signins: old.signins || 0, runSec: old.runSec || 0 };
   i < 0 ? I.list.push(e) : (I.list[i] = e);
   acctIdxSave();
 }
+function acctStat(id, fn) {
+  const e = acctIndex().list.find((x) => x.id === id);
+  if (e) (fn(e), acctIdxSave());
+  return e;
+}
+const acctPingAt = new Map();
 // Block World worlds never come here, even if a device sends them
 const acctClean = (st) => Object.fromEntries(Object.entries(st || {}).filter(([k, v]) => typeof v === "string" && /^(wb[-_]|stark_)/.test(k) && !/world|^wb-bw/i.test(k)));
 const acctView = (A) => ({ account: { email: A.email, name: A.name, created: A.created }, rev: A.rev || "", save: A.save || null, size: A.size || 0, limit: acctMaxEach() });
@@ -1560,6 +1568,7 @@ async function acctRoute(req, res, what) {
     Object.assign(A, { email: g.email, name: g.name, seen: Date.now() });
     A.disk = acctWrite(acctFile(id), A);
     acctIndexPut(A);
+    acctStat(id, (e) => (e.signins = (e.signins || 0) + 1));
     isNew && pubEvent("note", "A new Workbench account", (g.name || "Someone") + " signed in with Google for the first time.");
     return json(res, 200, Object.assign({ token: acctTok(id) }, acctView(A)));
   }
@@ -1567,6 +1576,16 @@ async function acctRoute(req, res, what) {
   const b = await jsonBody(req, ACCT_MAX * 1.3),
     id = acctCheck(b.token);
   if (!id) return fail(res, 401, "Sign in with Google again.");
+  if (what === "ping") {
+    // the app says "I have been open for about this many seconds since my last ping": added to the account's total time
+    const now = Date.now(),
+      s = Math.max(0, Math.min(120, Math.round(+b.s || 0)));
+    if (now - (acctPingAt.get(id) || 0) < 20000) return json(res, 200, { ok: !0 });
+    acctPingAt.set(id, now);
+    acctPingAt.size > 5000 && acctPingAt.clear();
+    acctStat(id, (e) => ((e.runSec = (e.runSec || 0) + s), (e.seen = now)));
+    return json(res, 200, { ok: !0 });
+  }
   const A = acctRead(acctFile(id), null);
   if (!A) return fail(res, 401, "Sign in with Google again.");
   if (what === "load") return ((A.seen = Date.now()), (A.disk = acctWrite(acctFile(id), A)), json(res, 200, acctView(A)));
@@ -1781,7 +1800,7 @@ async function inboxRoute(req, res) {
     return json(res, 200, { ok: !0 });
   }
   if (req.method === "POST" && url.pathname === "/pair") return json(res, 200, pairUse(req, await jsonBody(req, 2000)));
-  if (req.method === "POST" && /^\/acct\/(google|load|save|delete)$/.test(url.pathname)) return acctRoute(req, res, url.pathname.slice(6));
+  if (req.method === "POST" && /^\/acct\/(google|load|save|delete|ping)$/.test(url.pathname)) return acctRoute(req, res, url.pathname.slice(6));
   if (req.method === "POST" && /^\/chat\/(join|list|send|del)$/.test(url.pathname)) return chatPubRoute(req, res, url.pathname.slice(6));
   if (req.method !== "POST" || !["/apply", "/message", "/form"].includes(url.pathname)) return fail(res, 404, "Not here.");
   const b = await jsonBody(req, 2.2e6),
@@ -3210,7 +3229,7 @@ async function route(req, res) {
     case "/api/accounts": {
       if (!owner) return fail(res, 403, "Only the owner.");
       const I = acctIndex();
-      return json(res, 200, { clientId: (C.google && C.google.clientId) || "", count: I.list.length, bytes: acctUsed(), limit: acctMaxEach(), maxEach: acctMaxEach(), maxTotal: acctMaxTotal(), list: I.list.slice().sort((a, b) => (b.seen || 0) - (a.seen || 0)).slice(0, 300) });
+      return json(res, 200, { clientId: (C.google && C.google.clientId) || "", count: I.list.length, signinsTotal: I.list.reduce((n, x) => n + (x.signins || 0), 0), runSecTotal: I.list.reduce((n, x) => n + (x.runSec || 0), 0), bytes: acctUsed(), limit: acctMaxEach(), maxEach: acctMaxEach(), maxTotal: acctMaxTotal(), list: I.list.slice().sort((a, b) => (b.seen || 0) - (a.seen || 0)).slice(0, 2000) });
     }
     case "/api/accounts/config": {
       if (!owner) return fail(res, 403, "Only the owner.");
