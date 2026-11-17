@@ -18,7 +18,7 @@ const http = require("http"),
   { readTags } = require("./tags.js"),
   { __wbReminders } = require("./reminders.js");
 
-const VERSION = "1.22.0";
+const VERSION = "1.22.1";
 const HOME = process.env.WB_HUB_HOME || path.join(__dirname, "..");
 const CONF = process.env.WB_HUB_CONFIG || path.join(HOME, "hub.json");
 const APP = "https://tonystarkofficial1111-web.github.io";
@@ -2004,13 +2004,14 @@ const GOAT = { at: 0, busy: !1, data: null };
 const goatCode = () => C.goatCode || C.countCode || "";
 const goatBase = () => process.env.WB_GOAT_URL || "https://" + goatCode() + ".goatcounter.com";
 // q: one set of parameters, or a list to try in turn: a 400 ("bad request") from GoatCounter means it didn't like one of
-// them, so the next, plainer set is tried (down to none at all, which GoatCounter answers with its default last week)
+// them (a 404 is retried the same way, in case an option is what it did not find), so the next, plainer set is tried (down to none
+// at all, which GoatCounter answers with its default last week)
 async function goatApi(p, q) {
   const sets = Array.isArray(q) ? q : [q || {}];
   let last = null;
   for (let i = 0; i < sets.length; i++) {
     last = await goatCall(p, sets[i]);
-    if (last.status !== 400 || i === sets.length - 1) break;
+    if ((last.status !== 400 && last.status !== 404) || i === sets.length - 1) break;
   }
   return goatResult(p, last);
 }
@@ -2030,7 +2031,7 @@ async function goatResult(p, r) {
     try {
       exists = (await fetch(goatBase() + "/counter/TOTAL.json", { signal: AbortSignal.timeout(8000) })).status !== 404;
     } catch {}
-    throw new Error(exists ? "the site “" + goatCode() + "” exists, but GoatCounter's API answered 404 for " + p + (snip ? ". It said: " + snip : "") : "GoatCounter doesn't know a site called “" + goatCode() + "”. Check the address you see your visitors at: the part before .goatcounter.com is the site code");
+    throw new Error(exists ? "the site “" + goatCode() + "” exists, but GoatCounter's API answered 404 (page not found) for " + p + ", even with the plainest request (" + r.url.pathname + (r.url.search || "") + "). GoatCounter may be having a problem, or the API key belongs to another site. Try again in a few minutes, and check the key under Settings → API on the right site" + (snip ? ". It said: " + snip.slice(0, 80) : "") : "GoatCounter doesn't know a site called “" + goatCode() + "”. Check the address you see your visitors at: the part before .goatcounter.com is the site code");
   }
   if (!r.ok) throw new Error("GoatCounter answered " + r.status + " for " + p + " (" + (r.url.search || "no options") + ")" + (snip ? ". It said: " + snip : ""));
   try {
