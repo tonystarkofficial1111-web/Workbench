@@ -1,6 +1,6 @@
 {
  "version": "1.23.0",
- "app": "6.55.0",
+ "app": "6.56.0",
  "files": {
   "server.js": "9528098d9d20c2ffe94b7d0c0d7e9868326e6b3d7589fc64cf0f4d8a48545cd7",
   "browser.js": "c3e82377e262a2ce69cbec47e595794845f468d053b94bf9ceaa313272d1af2e",
