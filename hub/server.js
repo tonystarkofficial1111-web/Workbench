@@ -18,7 +18,7 @@ const http = require("http"),
   { readTags } = require("./tags.js"),
   { __wbReminders } = require("./reminders.js");
 
-const VERSION = "1.24.0";
+const VERSION = "1.25.0";
 const HOME = process.env.WB_HUB_HOME || path.join(__dirname, "..");
 const CONF = process.env.WB_HUB_CONFIG || path.join(HOME, "hub.json");
 const APP = "https://tonystarkofficial1111-web.github.io";
@@ -1081,7 +1081,7 @@ const PUBDIR = () => path.join(C.root, "Public");
 let P = null;
 function pubLoad() {
   if (!P) {
-    P = Object.assign({ companies: [], apps: [], msgs: [], artist: { name: "", bio: "", photo: "", socials: {} }, tracks: [], published: { at: 0, commit: "", files: {} }, radioEpoch: 0, forms: null, responses: [], events: [], changedAt: 0 }, readJson(hubf("public.json"), {}));
+    P = Object.assign({ companies: [], apps: [], msgs: [], artist: { name: "", bio: "", photo: "", socials: {} }, tracks: [], published: { at: 0, commit: "", files: {} }, radioEpoch: 0, forms: null, responses: [], events: [], changedAt: 0, pledges: [], supporters: [] }, readJson(hubf("public.json"), {}));
     // 1.4.0: ready-made forms, and 1.3.0's applications become answers to the company sign-up form
     if (!Array.isArray(P.forms)) P.forms = formDefaults();
     const cf = P.forms.find((f) => f.kind === "company");
@@ -1307,6 +1307,8 @@ function pubData() {
     inbox: C.inbox && C.inboxUrl ? C.inboxUrl : "",
     google: (C.google && C.google.clientId) || "",
     trails: (S.trails || []).filter((t) => t.on !== !1 && t.stops.length >= 2).map((t) => ({ id: t.id, title: t.title, desc: t.desc || "", reward: t.reward || "", stops: t.stops.filter((x) => live.some((c) => c.slug === x)) })),
+    support: S.support && (S.support.email || (S.support.links || []).length) ? { email: S.support.email || "", links: S.support.links || [] } : null,
+    supporters: (S.supporters || []).filter((x) => x.on !== !1).sort((a, b) => b.amount - a.amount || a.at - b.at).slice(0, 100).map((x) => ({ n: x.anon ? "Anonymous" : x.name, a: x.amount })),
     today: S.dayCo && live.some((c) => c.slug === S.dayCo.slug) ? S.dayCo : null,
     stats: Object.fromEntries(live.map((c) => [c.slug, trfSum("co", c.slug, 30)]).filter((x) => x[1] >= 5)),
     forms: (S.forms || []).filter((f) => f.open).map((f) => ({ slug: f.slug, title: f.title, desc: f.desc || "", kind: f.kind, fields: f.fields.map((q) => ({ id: q.id, type: q.type, label: q.label, help: q.help, req: q.req, opts: q.opts })) })),
@@ -1802,11 +1804,31 @@ async function inboxRoute(req, res) {
   if (req.method === "POST" && url.pathname === "/pair") return json(res, 200, pairUse(req, await jsonBody(req, 2000)));
   if (req.method === "POST" && /^\/acct\/(google|load|save|delete|ping)$/.test(url.pathname)) return acctRoute(req, res, url.pathname.slice(6));
   if (req.method === "POST" && /^\/chat\/(join|list|send|del)$/.test(url.pathname)) return chatPubRoute(req, res, url.pathname.slice(6));
-  if (req.method !== "POST" || !["/apply", "/message", "/form"].includes(url.pathname)) return fail(res, 404, "Not here.");
+  if (req.method !== "POST" || !["/apply", "/message", "/form", "/support"].includes(url.pathname)) return fail(res, 404, "Not here.");
   const b = await jsonBody(req, 2.2e6),
     S = pubLoad();
   if (b.website2) return json(res, 200, { ok: !0 });
   inboxLimit(req);
+  if (url.pathname === "/support") {
+    // someone says they want to support Workbench (or already did): kept as a pledge until the owner has checked the payment
+    if ((S.pledges || []).filter((x) => x.status === "new").length >= 300) return fail(res, 503, "Too many are waiting right now. Try again later.");
+    const amt = Math.round(Number(b.amount) * 100) / 100,
+      nm = clip(b.name, 60).trim();
+    if (!nm) return fail(res, 400, "Write the name to show.");
+    if (!(amt > 0) || amt > 1e6) return fail(res, 400, "Write the amount as a number, like 20.");
+    const AL = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+    let ref = "";
+    do ref = "WB-" + Array.from({ length: 4 }, () => AL[Math.floor(Math.random() * AL.length)]).join("");
+    while ((S.pledges || []).some((x) => x.ref === ref) || (S.supporters || []).some((x) => x.ref === ref));
+    const pl = { id: id36(), at: Date.now(), ref, name: nm, amount: amt, anon: !!b.anon, contact: clip(b.contact, 160), note: clip(b.note, 400), status: "new" };
+    (S.pledges ||= []).unshift(pl);
+    S.pledges.length > 400 && (S.pledges.length = 400);
+    writeJson(hubf("public.json"), S);
+    log("Support pledge:", nm, amt, ref);
+    trfHit("sent", "support");
+    pubNotify("Supporter to check: " + (pl.anon ? "Anonymous" : nm), "Says " + amt + " · reference " + ref + ". Check your payments, then verify it on the Rig tab.", "support", pl.id, [["done", "Seen"]]);
+    return json(res, 200, { ok: !0, ref });
+  }
   if (url.pathname === "/form" || url.pathname === "/apply") {
     if (S.responses.filter((r) => r.status === "new").length >= 1000) return fail(res, 503, "Too many answers are waiting right now. Try again later.");
     let f, body = b;
@@ -2626,6 +2648,47 @@ async function route(req, res) {
         const c = companySave(Object.assign({}, a, { id: void 0 }));
         ((c.logo = a.logo || ""), (c.contact = a.contact || ""), (c.from = "application"));
       }
+      pubSave();
+      return json(res, 200, pubView(u));
+    }
+    case "/api/pub/preview": {
+      // what Publish would put on the website right now (the owner can look before sending it)
+      if (!owner) return fail(res, 403, "Only the owner.");
+      return json(res, 200, pubData());
+    }
+    case "/api/pub/support": {
+      if (!owner) return fail(res, 403, "Only the owner.");
+      const b = await jsonBody(req, 4e3),
+        S = pubLoad(),
+        amt = Math.round(Number(b.amount) * 100) / 100;
+      S.supporters ||= [];
+      S.pledges ||= [];
+      if (b.act === "verify") {
+        // a pledge whose payment the owner has seen: it joins the list with the amount the owner confirms (not the one typed)
+        const pl = S.pledges.find((x) => x.id === b.id);
+        if (!pl) return fail(res, 404, "That one is gone.");
+        if (!(amt > 0) || amt > 1e6) return fail(res, 400, "Write the amount you received.");
+        S.supporters.push({ id: id36(), at: Date.now(), ref: pl.ref, name: pl.name, amount: amt, anon: !!pl.anon, on: !0 });
+        S.pledges = S.pledges.filter((x) => x.id !== b.id);
+      } else if (b.act === "dismiss") S.pledges = S.pledges.filter((x) => x.id !== b.id);
+      else if (b.act === "add") {
+        if (!clip(b.name, 60).trim() || !(amt > 0) || amt > 1e6) return fail(res, 400, "A name and an amount, please.");
+        S.supporters.push({ id: id36(), at: Date.now(), ref: "", name: clip(b.name, 60).trim(), amount: amt, anon: !!b.anon, on: !0 });
+      } else if (b.act === "edit") {
+        const x = S.supporters.find((y) => y.id === b.id);
+        if (!x) return fail(res, 404, "That one is gone.");
+        if (b.name !== void 0 && clip(b.name, 60).trim()) x.name = clip(b.name, 60).trim();
+        if (b.amount !== void 0 && amt > 0 && amt <= 1e6) x.amount = amt;
+        if (b.anon !== void 0) x.anon = !!b.anon;
+        if (b.on !== void 0) x.on = !!b.on;
+      } else if (b.act === "remove") S.supporters = S.supporters.filter((x) => x.id !== b.id);
+      else if (b.act === "settings") {
+        // where people can pay: an email, and up to five links (GitHub Sponsors, a tip page...)
+        const em = clip(b.email, 120),
+          links = (Array.isArray(b.links) ? b.links : []).slice(0, 5).map((l) => ({ label: clip(l && l.label, 40), url: clip(l && l.url, 300) })).filter((l) => l.label && /^https:\/\/[^\s]+$/i.test(l.url));
+        if (em && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) return fail(res, 400, "That email doesn't look right.");
+        S.support = { email: em, links };
+      } else return fail(res, 400, "Unknown.");
       pubSave();
       return json(res, 200, pubView(u));
     }
