@@ -18,7 +18,7 @@ const http = require("http"),
   { readTags } = require("./tags.js"),
   { __wbReminders } = require("./reminders.js");
 
-const VERSION = "1.25.0";
+const VERSION = "1.25.1";
 const HOME = process.env.WB_HUB_HOME || path.join(__dirname, "..");
 const CONF = process.env.WB_HUB_CONFIG || path.join(HOME, "hub.json");
 const APP = "https://tonystarkofficial1111-web.github.io";
@@ -2668,8 +2668,15 @@ async function route(req, res) {
         const pl = S.pledges.find((x) => x.id === b.id);
         if (!pl) return fail(res, 404, "That one is gone.");
         if (!(amt > 0) || amt > 1e6) return fail(res, 400, "Write the amount you received.");
-        S.supporters.push({ id: id36(), at: Date.now(), ref: pl.ref, name: pl.name, amount: amt, anon: !!pl.anon, on: !0 });
+        S.supporters.push({ id: id36(), at: Date.now(), ref: pl.ref, name: clip(b.name, 60).trim() || pl.name, amount: amt, anon: b.anon !== void 0 ? !!b.anon : !!pl.anon, on: !0 });
         S.pledges = S.pledges.filter((x) => x.id !== b.id);
+      } else if (b.act === "fix") {
+        // a waiting entry: fix the name or amount before verifying (typos happen)
+        const pl = S.pledges.find((x) => x.id === b.id);
+        if (!pl) return fail(res, 404, "That one is gone.");
+        if (b.name !== void 0 && clip(b.name, 60).trim()) pl.name = clip(b.name, 60).trim();
+        if (b.amount !== void 0 && amt > 0 && amt <= 1e6) pl.amount = amt;
+        if (b.anon !== void 0) pl.anon = !!b.anon;
       } else if (b.act === "dismiss") S.pledges = S.pledges.filter((x) => x.id !== b.id);
       else if (b.act === "add") {
         if (!clip(b.name, 60).trim() || !(amt > 0) || amt > 1e6) return fail(res, 400, "A name and an amount, please.");
