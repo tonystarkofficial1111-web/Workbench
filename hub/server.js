@@ -18,7 +18,7 @@ const http = require("http"),
   { readTags } = require("./tags.js"),
   { __wbReminders } = require("./reminders.js");
 
-const VERSION = "1.27.0";
+const VERSION = "1.28.0";
 const HOME = process.env.WB_HUB_HOME || path.join(__dirname, "..");
 const CONF = process.env.WB_HUB_CONFIG || path.join(HOME, "hub.json");
 const APP = "https://tonystarkofficial1111-web.github.io";
@@ -2374,10 +2374,20 @@ function brLimitsView() {
       .slice(0, 40),
   });
 }
+// 1.28.0: a person can choose I2P for their own browser session (the owner can switch the choice off); the router has to be running
+async function i2pChoice(b) {
+  if (!b || !b.i2p) return { i2p: !1 };
+  const B = require("./browser.js"),
+    c = B.i2pCfg(C.browser && C.browser.i2p);
+  if (!c.choice) throw Object.assign(new Error("The owner hasn't allowed choosing I2P."), { code: 403 });
+  const pr = await B.i2pProbe(C.browser && C.browser.i2p);
+  if (!pr.http || !pr.https) throw Object.assign(new Error("I2P isn't answering on the rig right now, so it can't be used. Try again later, or use the browser without it."), { code: 503 });
+  return { i2p: !0 };
+}
 // the shared part of what a guest (by code) or a visitor (public) can do: the browser, and nothing else
 async function guestBrowserApi(req, res, url, P, u, G) {
   const M = req.method,
-    st = () => Object.assign(BRW ? BRW.state(u) : { available: !1, active: null }, { ack: !!G.ack(), on: brOn(), can: !0, allowed: brOn(), module: !!BRW, limits: brPolicyView(u) });
+    st = () => Object.assign(BRW ? BRW.state(u) : { available: !1, active: null }, { ack: !!G.ack(), on: brOn(), can: !0, allowed: brOn(), module: !!BRW, limits: brPolicyView(u), i2p: { on: require("./browser.js").i2pCfg(C.browser && C.browser.i2p).on, choice: require("./browser.js").i2pCfg(C.browser && C.browser.i2p).choice } });
   if (P === "/state") return json(res, 200, st());
   if (P === "/ack" && M === "POST") return (G.setAck(), json(res, 200, st()));
   if (P === "/stop" && M === "POST") return (BRW && BRW.stop("Closed.", u.id), json(res, 200, st()));
@@ -2385,7 +2395,9 @@ async function guestBrowserApi(req, res, url, P, u, G) {
   if (P === "/start" && M === "POST") {
     if (!G.ack()) return fail(res, 409, "Read the notice about the rig's browser first.");
     G.beforeStart && G.beforeStart();
-    return json(res, 200, await BRW.start(u, C.browser, brPolicy(u)));
+    const b = await jsonBody(req, 500).catch(() => ({})),
+      ex = await i2pChoice(b);
+    return json(res, 200, await BRW.start(u, C.browser, brPolicy(u), ex));
   }
   if (["/go", "/input", "/resize"].includes(P) && M === "POST") {
     const b = await jsonBody(req, 20000);
@@ -2522,7 +2534,7 @@ async function guestDoor(req, res, key, rest, url) {
 }
 function brState(u) {
   const st = BRW ? BRW.state(u) : { available: !1, active: null };
-  return Object.assign(st, { ack: u.role === "owner" || !!u.brAck, on: brOn(), can: canBrowse(u), allowed: canBrowse(u) && brOn(), module: !!BRW, exe: u.role === "owner" ? (C.browser && C.browser.exe) || "" : undefined, i2p: u.role === "owner" ? require("./browser.js").i2pCfg(C.browser && C.browser.i2p) : { on: require("./browser.js").i2pCfg(C.browser && C.browser.i2p).on } });
+  return Object.assign(st, { ack: u.role === "owner" || !!u.brAck, on: brOn(), can: canBrowse(u), allowed: canBrowse(u) && brOn(), module: !!BRW, exe: u.role === "owner" ? (C.browser && C.browser.exe) || "" : undefined, i2p: u.role === "owner" ? require("./browser.js").i2pCfg(C.browser && C.browser.i2p) : { on: require("./browser.js").i2pCfg(C.browser && C.browser.i2p).on, choice: require("./browser.js").i2pCfg(C.browser && C.browser.i2p).choice } });
 }
 async function route(req, res) {
   const url = new URL(req.url, "http://hub"),
@@ -3496,7 +3508,8 @@ async function route(req, res) {
       if (!brOn()) return fail(res, 403, "The owner has the rig's browser switched off.");
       if (!canBrowse(u)) return fail(res, 403, "The owner hasn't turned the rig's browser on for you.");
       if (u.role !== "owner" && !u.brAck) return fail(res, 409, "Read the notice about the rig's browser first.");
-      return json(res, 200, await BRW.start(u, C.browser));
+      const b = await jsonBody(req, 500).catch(() => ({}));
+      return json(res, 200, await BRW.start(u, C.browser, void 0, await i2pChoice(b)));
     }
     case "/api/browser/stop":
       if (M !== "POST") break;

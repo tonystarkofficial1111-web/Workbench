@@ -143,11 +143,11 @@ const NOTE_PAGE = (t, b) => "<!doctype html><meta charset=utf-8><title>" + t + "
 // runs the I2P router on the rig; it listens on this computer only: 127.0.0.1:4444 for web pages (HTTP) and :4445 for HTTPS.
 // The rig never looks the name up itself in this mode (no local DNS), and names that only make sense on the rig's own network
 // are still refused, so a guest can't use this to reach the home network.
-const I2P_DEFAULT = { on: !1, host: "127.0.0.1", http: 4444, https: 4445 };
+const I2P_DEFAULT = { on: !1, choice: !0, host: "127.0.0.1", http: 4444, https: 4445 };
 function i2pCfg(c) {
   c = Object.assign({}, I2P_DEFAULT, c || {});
   const port = (v, d) => (Number.isInteger(+v) && +v >= 1 && +v <= 65535 ? +v : d);
-  return { on: !!c.on, host: /^(127\.0\.0\.1|localhost|\[?::1\]?)$/i.test(String(c.host || "")) ? "127.0.0.1" : "127.0.0.1", http: port(c.http, 4444), https: port(c.https, 4445) };
+  return { on: !!c.on, choice: c.choice !== !1, host: /^(127\.0\.0\.1|localhost|\[?::1\]?)$/i.test(String(c.host || "")) ? "127.0.0.1" : "127.0.0.1", http: port(c.http, 4444), https: port(c.https, 4445) };
 }
 // a name is fine to send through I2P if it is a public-looking name or an .i2p address; private ranges and rig-only names never are
 function i2pTargetOk(host) {
@@ -221,7 +221,7 @@ function create(opts) {
         return res.end("Not allowed.");
       }
       const I2 = i2pCfg(opts.i2p && opts.i2p());
-      if (I2.on) {
+      if (I2.on || R.i2p) {
         if (u.protocol !== "http:" || !i2pTargetOk(u.hostname)) {
           R.s && R.s.blocked++;
           R.s && (R.s.lastBlocked = u.hostname);
@@ -268,7 +268,7 @@ function create(opts) {
         return;
       }
       const I2 = i2pCfg(opts.i2p && opts.i2p());
-      if (I2.on) {
+      if (I2.on || R.i2p) {
         if (!m || +m[2] > 65535 || !i2pTargetOk(m[1])) {
           R.s && R.s.blocked++;
           R.s && m && (R.s.lastBlocked = m[1]);
@@ -416,7 +416,8 @@ function create(opts) {
     await s.pg.send("Page.stopScreencast").catch(() => {});
     await s.pg.send("Page.startScreencast", { format: "jpeg", quality: 55, maxWidth: w, maxHeight: h, everyNthFrame: 1 });
   }
-  async function start(user, cfg, policy) {
+  // extra.i2p: this person chose to go through I2P for this session (1.28.0); only when the owner allows people to choose
+  async function start(user, cfg, policy, extra) {
     if (SESS.has(user.id)) return state(user);
     if (starts.has(user.id)) throw Object.assign(new Error("The rig's browser is starting. Try again in a moment."), { code: 409 });
     if (SESS.size + starts.size >= maxSess()) throw Object.assign(new Error("The rig's browser is full right now (" + maxSess() + " people are using it). Try again in a few minutes."), { code: 409 });
@@ -424,7 +425,7 @@ function create(opts) {
     if (!exe) throw Object.assign(new Error("The rig has no Edge or Chrome to use. Install Microsoft Edge or Google Chrome on the rig."), { code: 400 });
     if (os.freemem() < 0.9e9) throw Object.assign(new Error("The rig is low on memory right now (under 1 GB free). Try again later, or close something on the rig."), { code: 503 });
     starts.add(user.id);
-    const R = { s: null };
+    const R = { s: null, i2p: !!(extra && extra.i2p) };
     let proc = null,
       proxy = null,
       dir = "";
@@ -455,7 +456,7 @@ function create(opts) {
         "--window-size=1280,720",
         "about:blank",
       ];
-      if (i2pCfg(opts.i2p && opts.i2p()).on) args.push("--force-webrtc-ip-handling-policy=disable_non_proxied_udp", "--webrtc-ip-handling-policy=disable_non_proxied_udp");
+      if (i2pCfg(opts.i2p && opts.i2p()).on || R.i2p) args.push("--force-webrtc-ip-handling-policy=disable_non_proxied_udp", "--webrtc-ip-handling-policy=disable_non_proxied_udp");
       if (process.platform === "linux") args.push("--disable-dev-shm-usage", ...(process.getuid && process.getuid() === 0 ? ["--no-sandbox"] : []));
       proc = spawn(exe, args, { stdio: "ignore", windowsHide: !0 });
       proc.on("error", () => {});
@@ -477,7 +478,7 @@ function create(opts) {
       if (!page) throw new Error("The browser has no page.");
       const br = await cdp(ver.webSocketDebuggerUrl),
         pg = await cdp(page.webSocketDebuggerUrl);
-      const sess = (R.s = { user: { id: user.id, name: user.name }, targetId: page.id, id, proc, proxy, dir, br, pg, port, at: Date.now(), seen: Date.now(), url: "about:blank", title: "", host: "", n: 0, frame: null, waiters: [], blocked: 0, lastBlocked: "", w: 1280, h: 720, fw: 1280, fh: 720 });
+      const sess = (R.s = { user: { id: user.id, name: user.name }, targetId: page.id, id, proc, proxy, dir, br, pg, port, at: Date.now(), seen: Date.now(), url: "about:blank", title: "", host: "", n: 0, frame: null, waiters: [], blocked: 0, lastBlocked: "", w: 1280, h: 720, fw: 1280, fh: 720, i2p: R.i2p });
       SESS.set(user.id, sess);
       sess.policy = policy || null;
       proc.on("exit", () => SESS.get(user.id) === sess && stop("The browser closed.", sess));
@@ -593,7 +594,7 @@ function create(opts) {
   function state(user) {
     const exe = findExe(opts.exe && opts.exe()),
       S = (user && SESS.get(user.id)) || null;
-    return { inUse: SESS.size, max: maxSess(), full: SESS.size + starts.size >= maxSess() && !S, available: !!exe, active: S ? { user: S.user.name, since: S.at, host: S.host, mine: !!user && S.user.id === user.id, blocked: S.blocked, lastBlocked: S.lastBlocked, endsAt: S.endsAt || 0, refused: S.refused || 0, limited: !!S.policy } : null, url: S ? S.url : "", title: S ? S.title : "", w: S ? S.w : 0, h: S ? S.h : 0, n: S ? S.n : 0 };
+    return { inUse: SESS.size, max: maxSess(), full: SESS.size + starts.size >= maxSess() && !S, available: !!exe, active: S ? { i2p: !!S.i2p, user: S.user.name, since: S.at, host: S.host, mine: !!user && S.user.id === user.id, blocked: S.blocked, lastBlocked: S.lastBlocked, endsAt: S.endsAt || 0, refused: S.refused || 0, limited: !!S.policy } : null, url: S ? S.url : "", title: S ? S.title : "", w: S ? S.w : 0, h: S ? S.h : 0, n: S ? S.n : 0 };
   }
   const mine = (user) => {
     const S = SESS.get(user.id);
