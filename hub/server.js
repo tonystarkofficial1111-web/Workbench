@@ -18,7 +18,7 @@ const http = require("http"),
   { readTags } = require("./tags.js"),
   { __wbReminders } = require("./reminders.js");
 
-const VERSION = "1.25.1";
+const VERSION = "1.26.0";
 const HOME = process.env.WB_HUB_HOME || path.join(__dirname, "..");
 const CONF = process.env.WB_HUB_CONFIG || path.join(HOME, "hub.json");
 const APP = "https://tonystarkofficial1111-web.github.io";
@@ -1036,6 +1036,7 @@ function usage() {
     devices: devs.length,
     online: devs.filter((d) => d.online).length,
     peopleOnline: act(0),
+    visitors: liveStats(),
     today: act(864e5),
     week: act(7 * 864e5),
     month: act(30 * 864e5),
@@ -1659,6 +1660,64 @@ function trfSum(kind, slug, days) {
   for (const [k, d] of Object.entries(T.days)) k >= from && (n += (d[kind] && d[kind][slug]) || 0);
   return n;
 }
+// ---- who is on the website right now (1.26.0) ------------------------------------------------------------------------
+// Keyless and anonymous. A visitor's page tells the rig, every half minute while it is open and in view: a random code made for
+// that one tab (not kept anywhere, gone when the tab closes), what they are doing (a game or page from a fixed list of names) and
+// the Workbench version on their screen. The rig keeps that in memory only, drops a visitor after 75 seconds of silence, and
+// learns nothing else: no address, no name, no cookie. The only thing written to disk is the day's highest number.
+const LIVE = new Map(),
+  liveHits = new Map();
+function liveLimit(req) {
+  const ip = String(req.headers["x-forwarded-for"] || req.socket.remoteAddress || "?").split(",")[0].trim(),
+    now = Date.now(),
+    a = (liveHits.get(ip) || []).filter((t) => now - t < 3600000);
+  if (a.length >= 400) return !1;
+  a.push(now);
+  liveHits.set(ip, a);
+  liveHits.size > 5000 && liveHits.clear();
+  return !0;
+}
+function liveBeat(req, b) {
+  const id = String(b.i || "");
+  if (!/^[a-z0-9]{8,24}$/.test(id)) return;
+  if (b.bye) return void LIVE.delete(id);
+  if (!liveLimit(req)) return;
+  const now = Date.now(),
+    a = String(b.a || "").trim(),
+    v = String(b.v || "");
+  let e = LIVE.get(id);
+  if (!e) {
+    if (LIVE.size >= 3000) return;
+    e = { first: now, since: now, cur: "" };
+    LIVE.set(id, e);
+  }
+  e.last = now;
+  e.a = /^[A-Za-z0-9 :·&'-]{1,40}$/.test(a) ? a : "Browsing";
+  e.v = /^\d{1,2}\.\d{1,3}\.\d{1,3}$/.test(v) ? v : "";
+  e.cur !== e.a && ((e.cur = e.a), (e.since = now));
+  const T = trfLoad(),
+    d = (T.days[dayKey()] = T.days[dayKey()] || { open: 0, ref: {}, form: {}, co: {}, sent: {}, msg: {}, stamp: {}, trail: {} });
+  if (LIVE.size > (d.livePeak || 0)) {
+    d.livePeak = LIVE.size;
+    clearTimeout(trfT);
+    trfT = setTimeout(() => writeJson(hubf("traffic.json"), T), 4000);
+  }
+}
+function liveStats() {
+  const now = Date.now();
+  for (const [k, e] of LIVE) now - e.last > 75000 && LIVE.delete(k);
+  const by = {},
+    ver = {},
+    people = [];
+  for (const e of LIVE.values()) {
+    const g = (by[e.a] = by[e.a] || { a: e.a, n: 0 });
+    g.n++;
+    ver[e.v || "older"] = (ver[e.v || "older"] || 0) + 1;
+    people.push({ a: e.a, secs: Math.round((now - e.first) / 1000), on: Math.round((now - e.since) / 1000) });
+  }
+  const d = trfLoad().days[dayKey()];
+  return { now: LIVE.size, peak: Math.max((d && d.livePeak) || 0, LIVE.size), list: Object.values(by).sort((x, y) => y.n - x.n), versions: ver, people: people.sort((x, y) => y.secs - x.secs).slice(0, 40) };
+}
 const hitHits = new Map();
 function hitLimit(req) {
   const ip = String(req.headers["x-forwarded-for"] || req.socket.remoteAddress || "?").split(",")[0].trim(),
@@ -1796,6 +1855,10 @@ async function inboxRoute(req, res) {
   if (o) (res.setHeader("Access-Control-Allow-Origin", o), res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS"), res.setHeader("Access-Control-Allow-Headers", "Content-Type"));
   if (req.method === "OPTIONS") return (res.writeHead(204), res.end());
   if (url.pathname === "/ping") return json(res, 200, { ok: !0 });
+  if (req.method === "POST" && url.pathname === "/live") {
+    liveBeat(req, await jsonBody(req, 600));
+    return json(res, 200, { ok: !0 });
+  }
   if (req.method === "POST" && url.pathname === "/hit") {
     const b = await jsonBody(req, 400);
     hitLimit(req) && trfHit(String(b.k || ""), String(b.s || ""));
