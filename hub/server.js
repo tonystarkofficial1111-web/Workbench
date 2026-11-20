@@ -18,7 +18,7 @@ const http = require("http"),
   { readTags } = require("./tags.js"),
   { __wbReminders } = require("./reminders.js");
 
-const VERSION = "1.26.0";
+const VERSION = "1.27.0";
 const HOME = process.env.WB_HUB_HOME || path.join(__dirname, "..");
 const CONF = process.env.WB_HUB_CONFIG || path.join(HOME, "hub.json");
 const APP = "https://tonystarkofficial1111-web.github.io";
@@ -1718,6 +1718,7 @@ function liveStats() {
   const d = trfLoad().days[dayKey()];
   return { now: LIVE.size, peak: Math.max((d && d.livePeak) || 0, LIVE.size), list: Object.values(by).sort((x, y) => y.n - x.n), versions: ver, people: people.sort((x, y) => y.secs - x.secs).slice(0, 40) };
 }
+const CODE_TRIES = new Map();
 const hitHits = new Map();
 function hitLimit(req) {
   const ip = String(req.headers["x-forwarded-for"] || req.socket.remoteAddress || "?").split(",")[0].trim(),
@@ -3270,6 +3271,40 @@ async function route(req, res) {
       saveDevices();
       pubNotify("Rig Remote: allow " + a.device.name + "?", u.name + " asked from " + a.device.name + ". Allow it on the rig.", "remote", a.device.id);
       return json(res, 200, { remote: !1, pairReq: a.device.pairReq });
+    }
+    case "/api/remote/code": {
+      // 1.27.0: the access code, typed on the owner's phone (or any device signed in as the owner), makes it a Rig Remote without
+      // anyone having to allow it on the rig. The Hub never sees the code, only a one-way scramble of it. The rig keeps the scramble
+      // of the code the first time it is unlocked there (or the first phone to use it, until then); after that a phone must match it.
+      if (!owner) return fail(res, 403, "Only the owner can do this.");
+      if (M !== "POST") break;
+      const b = await jsonBody(req, 500),
+        pr = String(b.proof || ""),
+        f = hubf("remotecode.json"),
+        st = readJson(f, null);
+      if (!/^[a-f0-9]{64}$/.test(pr)) return fail(res, 400, "That isn't a code.");
+      if (fromRig(req)) {
+        (!st || st.proof !== pr) && writeJson(f, { proof: pr, at: Date.now() });
+        return json(res, 200, { ok: !0, rig: !0 });
+      }
+      const now = Date.now(),
+        t = (CODE_TRIES.get(u.id) || []).filter((x) => now - x < 600000);
+      if (t.length >= 8) return fail(res, 429, "Too many wrong codes. Wait a few minutes.");
+      if (st && st.proof !== pr) {
+        t.push(now);
+        CODE_TRIES.set(u.id, t);
+        return fail(res, 401, "That code isn't right.");
+      }
+      CODE_TRIES.delete(u.id);
+      !st && writeJson(f, { proof: pr, at: now });
+      if (!a.device.remote) {
+        a.device.remote = { at: now, code: !0 };
+        a.device.pairReq = 0;
+        saveDevices();
+        pubEvent("remote", "Rig Remote unlocked with the access code: " + a.device.name, "");
+        log("Rig Remote (access code):", a.device.name);
+      }
+      return json(res, 200, { ok: !0, remote: !0 });
     }
     case "/api/remote/allow": {
       if (!rigAdmin(req, a)) return adminNo(res);
