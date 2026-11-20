@@ -18,7 +18,7 @@ const http = require("http"),
   { readTags } = require("./tags.js"),
   { __wbReminders } = require("./reminders.js");
 
-const VERSION = "1.28.0";
+const VERSION = "1.29.0";
 const HOME = process.env.WB_HUB_HOME || path.join(__dirname, "..");
 const CONF = process.env.WB_HUB_CONFIG || path.join(HOME, "hub.json");
 const APP = "https://tonystarkofficial1111-web.github.io";
@@ -2444,7 +2444,7 @@ async function pubDoor(req, res, rest, url) {
   if (req.method === "OPTIONS") return (res.writeHead(204), res.end());
   const L = brLimits(),
     now = Date.now();
-  if (rest === "/state") return json(res, 200, L.pub.on && BRW && brOn() ? { on: !0, minutes: L.pub.minutes, cooldown: L.pub.cooldown, daily: L.pub.daily, onlyListed: !!L.pub.onlyListed, sites: L.pub.onlyListed ? brSites(L) : [], busy: !!(BRW && BRW.state(null).full) } : { on: !1 });
+  if (rest === "/state") return json(res, 200, L.pub.on && BRW && brOn() ? { on: !0, minutes: L.pub.minutes, cooldown: L.pub.cooldown, daily: L.pub.daily, onlyListed: !!L.pub.onlyListed, sites: L.pub.onlyListed ? brSites(L) : [], busy: !!(BRW && BRW.state(null).full), i2p: { on: require("./browser.js").i2pCfg(C.browser && C.browser.i2p).on, choice: require("./browser.js").i2pCfg(C.browser && C.browser.i2p).choice } } : { on: !1 });
   if (!L.pub.on || !BRW || !brOn()) return fail(res, 404, "Free browsing isn't on right now.");
   if (rest === "/join") {
     if (req.method !== "POST") return fail(res, 405, "Not here.");
