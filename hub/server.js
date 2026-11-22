@@ -18,7 +18,7 @@ const http = require("http"),
   { readTags } = require("./tags.js"),
   { __wbReminders } = require("./reminders.js");
 
-const VERSION = "1.29.0";
+const VERSION = "1.30.0";
 const HOME = process.env.WB_HUB_HOME || path.join(__dirname, "..");
 const CONF = process.env.WB_HUB_CONFIG || path.join(HOME, "hub.json");
 const APP = "https://tonystarkofficial1111-web.github.io";
@@ -1037,6 +1037,7 @@ function usage() {
     online: devs.filter((d) => d.online).length,
     peopleOnline: act(0),
     visitors: liveStats(),
+    sessions: sesStats(),
     today: act(864e5),
     week: act(7 * 864e5),
     month: act(30 * 864e5),
@@ -1680,7 +1681,7 @@ function liveLimit(req) {
 function liveBeat(req, b) {
   const id = String(b.i || "");
   if (!/^[a-z0-9]{8,24}$/.test(id)) return;
-  if (b.bye) return void LIVE.delete(id);
+  if (b.bye) { const e0 = LIVE.get(id); e0 && sesEnd(e0); return void LIVE.delete(id); }
   if (!liveLimit(req)) return;
   const now = Date.now(),
     a = String(b.a || "").trim(),
@@ -1691,6 +1692,9 @@ function liveBeat(req, b) {
     e = { first: now, since: now, cur: "" };
     LIVE.set(id, e);
   }
+  // (1.30.0) the seconds spent on each part, for the day's totals when the visit ends
+  e.prev && e.cur && ((e.acts = e.acts || {}), (e.acts[e.cur] = (e.acts[e.cur] || 0) + Math.min(60, (now - e.prev) / 1000)));
+  e.prev = now;
   e.last = now;
   e.a = /^[A-Za-z0-9 :·&'-]{1,40}$/.test(a) ? a : "Browsing";
   e.v = /^\d{1,2}\.\d{1,3}\.\d{1,3}$/.test(v) ? v : "";
@@ -1703,9 +1707,60 @@ function liveBeat(req, b) {
     trfT = setTimeout(() => writeJson(hubf("traffic.json"), T), 4000);
   }
 }
+// ---- (1.30.0) how long Workbench stays open, anonymously ---------------------------------------------------------------
+// When a visit ends (the tab closes, or 75 seconds of silence) the rig adds it to that day's totals: the hour it began, how
+// long it was open and in view, and the seconds spent in each part (a game, a page). The random code is never written down,
+// and nothing else is kept: no address, no name, no device.
+function sesEnd(e) {
+  if (e.done) return;
+  e.done = 1;
+  const secs = Math.max(5, Math.round((e.last - e.first) / 1000) + 15),
+    T = trfLoad(),
+    k = dayKey(e.first),
+    d = (T.days[k] = T.days[k] || { open: 0, ref: {}, form: {}, co: {}, sent: {}, msg: {}, stamp: {}, trail: {} }),
+    s = (d.ses = d.ses || { n: 0, h: new Array(24).fill(0), d: [], a: {} }),
+    hr = new Date(e.first).getHours();
+  s.n++;
+  s.h[hr] = (s.h[hr] || 0) + 1;
+  s.d.length < 1500 && s.d.push(secs);
+  for (const [a, t] of Object.entries(e.acts || {})) if (Object.keys(s.a).length < 60 || s.a[a]) s.a[a] = Math.round((s.a[a] || 0) + t);
+  clearTimeout(trfT);
+  trfT = setTimeout(() => writeJson(hubf("traffic.json"), T), 4000);
+}
+function livePrune() {
+  const now = Date.now();
+  for (const [k, e] of LIVE) now - e.last > 75000 && (sesEnd(e), LIVE.delete(k));
+}
+setInterval(livePrune, 30000).unref();
+function sesStats() {
+  const T = trfLoad(),
+    days = [],
+    h7 = new Array(24).fill(0),
+    durs = [],
+    acts = {};
+  for (let i = 13; i >= 0; i--) {
+    const k = dayKey(Date.now() - i * 864e5),
+      s = (T.days[k] && T.days[k].ses) || null,
+      dd = s ? s.d.slice().sort((a, b) => a - b) : [];
+    days.push({ day: k, n: s ? s.n : 0, avg: dd.length ? Math.round(dd.reduce((a, b) => a + b, 0) / dd.length) : 0, med: dd.length ? dd[dd.length >> 1] : 0, total: dd.reduce((a, b) => a + b, 0) });
+    if (s && i < 7) {
+      s.h.forEach((n, j) => (h7[j] += n || 0));
+      durs.push(...s.d);
+      for (const [a, t] of Object.entries(s.a || {})) acts[a] = (acts[a] || 0) + t;
+    }
+  }
+  durs.sort((a, b) => a - b);
+  const buck = [60, 300, 900, 3600, Infinity].map((lim, i, A) => durs.filter((x) => x <= lim && x > (i ? A[i - 1] : 0)).length);
+  return {
+    days,
+    hours: h7,
+    week: { n: durs.length, avg: durs.length ? Math.round(durs.reduce((a, b) => a + b, 0) / durs.length) : 0, med: durs.length ? durs[durs.length >> 1] : 0, longest: durs.length ? durs[durs.length - 1] : 0, total: durs.reduce((a, b) => a + b, 0), buckets: buck },
+    acts: Object.entries(acts).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([a, t]) => ({ a, t: Math.round(t) })),
+  };
+}
 function liveStats() {
   const now = Date.now();
-  for (const [k, e] of LIVE) now - e.last > 75000 && LIVE.delete(k);
+  livePrune();
   const by = {},
     ver = {},
     people = [];
