@@ -18,7 +18,7 @@ const http = require("http"),
   { readTags } = require("./tags.js"),
   { __wbReminders } = require("./reminders.js");
 
-const VERSION = "1.34.0";
+const VERSION = "1.35.0";
 const HOME = process.env.WB_HUB_HOME || path.join(__dirname, "..");
 const CONF = process.env.WB_HUB_CONFIG || path.join(HOME, "hub.json");
 const APP = "https://tonystarkofficial1111-web.github.io";
@@ -1313,10 +1313,16 @@ function pubData() {
     supporters: (S.supporters || []).filter((x) => x.on !== !1).sort((a, b) => b.amount - a.amount || a.at - b.at).slice(0, 100).map((x) => ({ n: x.anon ? "Anonymous" : x.name, a: x.amount })),
     today: S.dayCo && live.some((c) => c.slug === S.dayCo.slug) ? S.dayCo : null,
     // (1.34.0) the company of the week: the paid or chosen booking for this week, else nothing (the website then takes turns)
-    week: (() => { const b = weekNow(S); return b && live.some((c) => c.slug === b.slug) ? { slug: b.slug, from: b.from, until: weekEnd(b.from) } : null; })(),
+    // (1.35.0) nobody paid for this week: the owner's own choice fills it, so paying is what puts anyone else there
+    week: (() => {
+      const b = weekNow(S);
+      if (b && live.some((c) => c.slug === b.slug)) return { slug: b.slug, from: b.from, until: weekEnd(b.from) };
+      const d = S.defaultCo && live.find((c) => c.slug === S.defaultCo), mo = monOf(Date.now());
+      return d ? { slug: d.slug, from: mo, until: weekEnd(mo), def: !0 } : null;
+    })(),
     stats: Object.fromEntries(live.map((c) => [c.slug, trfSum("co", c.slug, 30)]).filter((x) => x[1] >= 5)),
     forms: (S.forms || []).filter((f) => f.open).map((f) => ({ slug: f.slug, title: f.title, desc: f.desc || "", kind: f.kind, fields: f.fields.map((q) => ({ id: q.id, type: q.type, label: q.label, help: q.help, req: q.req, opts: q.opts })) })),
-    companies: live.map((c) => ({ id: c.id, slug: c.slug, sh2: stampHash(c.slug, c.stamp), posts: (c.posts || []).slice(0, 5).map((x) => ({ at: x.at, text: x.text })), name: c.name, category: c.category || "", description: c.description || "", city: c.city || "", address: c.address || "", phone: c.phone || "", email: c.email || "", website: c.website || "", socials: c.socials || {}, deal: c.deal || "", code: c.code || "", featured: !!c.featured, logo: m(c.logo) })),
+    companies: live.map((c) => ({ id: c.id, slug: c.slug, sh2: stampHash(c.slug, c.stamp), posts: (c.posts || []).slice(0, 5).map((x) => ({ at: x.at, text: x.text })), name: c.name, category: c.category || "", description: c.description || "", city: c.city || "", address: c.address || "", phone: c.phone || "", email: c.email || "", website: c.website || "", socials: c.socials || {}, deal: c.deal || "", code: c.code || "", featured: !!c.featured, logo: m(c.logo), gallery: (c.gallery || []).map(m), bg: m(c.bg), videos: (c.videos || []).map((v) => ({ id: v.id, title: v.title || "", sec: v.sec || 0, poster: m(v.poster) })) })),
     spotlight: tracks.length || S.artist.name ? { artist: { name: S.artist.name || "", bio: S.artist.bio || "", photo: m(S.artist.photo), socials: S.artist.socials || {} }, epoch: S.radioEpoch, tracks: tracks.map((t) => ({ id: t.id, title: t.title, dur: t.dur || 0, file: m(t.file), cover: m(t.cover), at: t.at })) } : null,
   };
 }
@@ -1343,7 +1349,12 @@ function publishRun() {
       data = pubData(),
       dir = cfg.dir || "public",
       want = new Set();
-    for (const c of data.companies) c.logo && want.add(c.logo.slice(6));
+    for (const c of data.companies) {
+      c.logo && want.add(c.logo.slice(6));
+      (c.gallery || []).forEach((g) => want.add(g.slice(6)));
+      c.bg && want.add(c.bg.slice(6));
+      (c.videos || []).forEach((v) => v.poster && want.add(v.poster.slice(6)));
+    }
     if (data.spotlight) {
       data.spotlight.artist.photo && want.add(data.spotlight.artist.photo.slice(6));
       for (const t of data.spotlight.tracks) (want.add(t.file.slice(6)), t.cover && want.add(t.cover.slice(6)));
@@ -1601,6 +1612,120 @@ function bizWeeks(S, slug) {
   }
   return out;
 }
+// ---- (1.35.0) business media: pictures and a short loop (published with the site) and videos (kept on the rig, streamed from here) ----
+// Videos are up to 300 MB and 20 minutes each, three per business, uploaded straight to the rig and played only when someone presses play.
+// A file is only ever reachable by its long random name; the website learns the names of approved ones when it is published.
+const BIZMEDIA = () => path.join(C.root, ".hub", "biz-media");
+let bizStreams = 0;
+function mp4Sec(f) {
+  try {
+    const fd = fs.openSync(f, "r"), st = fs.fstatSync(fd), b = Buffer.alloc(16);
+    let pos = 0;
+    while (pos + 8 <= st.size) {
+      fs.readSync(fd, b, 0, 16, pos);
+      let size = b.readUInt32BE(0), hdr = 8;
+      const type = b.toString("latin1", 4, 8);
+      if (size === 1) { size = Number(b.readBigUInt64BE(8)); hdr = 16; } else if (size === 0) size = st.size - pos;
+      if (size < hdr) break;
+      if (type === "moov") {
+        const len = Math.min(size, 8e6), mb = Buffer.alloc(len);
+        fs.readSync(fd, mb, 0, len, pos);
+        const i = mb.indexOf("mvhd");
+        fs.closeSync(fd);
+        if (i < 0) return null;
+        const v = mb[i + 4], p = i + 8 + (v === 1 ? 16 : 8), ts = mb.readUInt32BE(p), dur = v === 1 ? Number(mb.readBigUInt64BE(p + 4)) : mb.readUInt32BE(p + 4);
+        return ts ? dur / ts : null;
+      }
+      pos += size;
+    }
+    fs.closeSync(fd);
+  } catch {}
+  return null;
+}
+async function receiveCap(req, dest, max) {
+  await fsp.mkdir(path.dirname(dest), { recursive: !0 });
+  const tmp = dest + ".part";
+  let n = 0;
+  await new Promise((ok, bad) => {
+    const w = fs.createWriteStream(tmp);
+    req.on("data", (c) => { n += c.length; if (n > max) { req.destroy(); w.destroy(); bad(Object.assign(new Error("That file is too big."), { code: 413 })); } });
+    req.pipe(w);
+    w.on("finish", ok);
+    w.on("error", bad);
+    req.on("aborted", () => (w.destroy(), bad(new Error("The upload stopped."))));
+    req.on("error", bad);
+  }).catch(async (e) => { await fsp.rm(tmp, { force: !0 }); throw e; });
+  await fsp.rename(tmp, dest);
+  return n;
+}
+async function bizUp(req, res, url) {
+  acctLimit(req, 60);
+  const who = bizWho({ token: url.searchParams.get("token") }), S = pubLoad(), co = bizCo(S, who.email);
+  if (!co) return fail(res, 403, "This Google account isn't a business on Workbench.");
+  const kind = url.searchParams.get("kind") === "bg" ? "bg" : "video", ct = String(req.headers["content-type"] || ""), ext = /webm/.test(ct) ? "webm" : /mp4|quicktime|m4v/.test(ct) ? "mp4" : "",
+    max = kind === "bg" ? 3.2e6 : 300e6, len = +req.headers["content-length"];
+  if (!ext) return fail(res, 400, "Send an MP4 or WebM video.");
+  if (!(len > 0) || len > max) return fail(res, 413, kind === "bg" ? "The background loop can be up to 3 MB." : "Videos can be up to 300 MB.");
+  const up = (S.bizUp = S.bizUp || {}), vids = Object.entries(up).filter(([, x]) => x.slug === co.slug && x.kind === "video" && !(co.videos || []).some((v) => v.id === x.id));
+  if (kind === "video" && vids.length + (co.videos || []).length >= 6) return fail(res, 400, "Remove a video or send your changes for approval before uploading another.");
+  const id = crypto.randomBytes(12).toString("hex"), tmpf = path.join(BIZMEDIA(), id + "." + ext);
+  const size = await receiveCap(req, tmpf, max);
+  const head = Buffer.alloc(12), fd = fs.openSync(tmpf, "r");
+  fs.readSync(fd, head, 0, 12, 0);
+  fs.closeSync(fd);
+  const isMp4 = head.toString("latin1", 4, 8) === "ftyp", isWebm = head[0] === 0x1a && head[1] === 0x45 && head[2] === 0xdf && head[3] === 0xa3;
+  if (!(ext === "mp4" ? isMp4 : isWebm)) { await fsp.rm(tmpf, { force: !0 }); return fail(res, 400, "That doesn't look like a " + ext.toUpperCase() + " video."); }
+  const sec = ext === "mp4" ? mp4Sec(tmpf) : null;
+  if (sec && sec > (kind === "bg" ? 9 : 1205)) { await fsp.rm(tmpf, { force: !0 }); return fail(res, 400, kind === "bg" ? "The background loop can be up to 8 seconds." : "Videos can be up to 20 minutes."); }
+  if (kind === "bg") {
+    const file = sha(fs.readFileSync(tmpf)).slice(0, 16) + "." + ext;
+    fs.mkdirSync(PUBDIR(), { recursive: !0 });
+    await fsp.rename(tmpf, path.join(PUBDIR(), file));
+    up[file] = { slug: co.slug, kind: "bg", at: Date.now() };
+    pubSave();
+    return json(res, 200, { file });
+  }
+  up[id] = { slug: co.slug, kind: "video", at: Date.now(), ext, sec: sec ? Math.round(sec) : 0, size, id };
+  pubSave();
+  return json(res, 200, { id, sec: sec ? Math.round(sec) : 0, size });
+}
+// the pictures and loops by their file name, the videos by their id (with Range, so they can be played and skipped through)
+function bizServe(req, res, url) {
+  const name = url.pathname.split("/").pop(), vid = url.pathname.startsWith("/v/"), S = pubLoad();
+  let f, type;
+  if (vid) {
+    if (!/^[0-9a-f]{24}$/.test(name)) return fail(res, 404, "Not here.");
+    const v = (S.bizUp || {})[name] || S.companies.flatMap((c) => c.videos || []).find((x) => x.id === name);
+    if (!v) return fail(res, 404, "Not here.");
+    f = path.join(BIZMEDIA(), name + "." + (v.ext === "webm" ? "webm" : "mp4"));
+    type = v.ext === "webm" ? "video/webm" : "video/mp4";
+    if (bizStreams >= 8) return fail(res, 503, "Busy right now. Try again in a minute.");
+  } else {
+    const m = /^([0-9a-f]{16})\.(png|jpg|webp|mp4|webm)$/.exec(name);
+    if (!m) return fail(res, 404, "Not here.");
+    f = path.join(PUBDIR(), name);
+    type = { png: "image/png", jpg: "image/jpeg", webp: "image/webp", mp4: "video/mp4", webm: "video/webm" }[m[2]];
+  }
+  let st;
+  try { st = fs.statSync(f); } catch { return fail(res, 404, "Not here."); }
+  const hd = { "Content-Type": type, "Accept-Ranges": "bytes", "Cache-Control": "public, max-age=86400" };
+  let a = 0, z = st.size - 1;
+  const r = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || "");
+  if (r && (r[1] || r[2])) {
+    if (r[1]) { a = +r[1]; r[2] && (z = Math.min(z, +r[2])); } else a = Math.max(0, st.size - +r[2]);
+    if (a > z || a >= st.size) { res.writeHead(416, { "Content-Range": "bytes */" + st.size }); return res.end(); }
+    res.writeHead(206, Object.assign(hd, { "Content-Range": "bytes " + a + "-" + z + "/" + st.size, "Content-Length": z - a + 1 }));
+  } else res.writeHead(200, Object.assign(hd, { "Content-Length": st.size }));
+  if (req.method === "HEAD") return res.end();
+  vid && bizStreams++;
+  const rs = fs.createReadStream(f, { start: a, end: z });
+  let done = !1;
+  const end = () => { if (!done) { done = !0; vid && bizStreams--; rs.destroy(); } };
+  rs.pipe(res);
+  res.on("close", end);
+  rs.on("error", end);
+  rs.on("end", end);
+}
 async function bizRoute(req, res, what) {
   acctLimit(req, 240);
   const b = await jsonBody(req, 2.2e6), who = bizWho(b), S = pubLoad(), co = bizCo(S, who.email);
@@ -1611,7 +1736,8 @@ async function bizRoute(req, res, what) {
       return json(res, 200, {
         state: "company", email: who.email,
         company: { slug: co.slug, name: co.name, category: co.category || "", description: co.description || "", city: co.city || "", address: co.address || "", phone: co.phone || "", email: co.email || "", website: co.website || "", socials: co.socials || {}, deal: co.deal || "", code: co.code || "", logo: co.logo ? "media/" + co.logo : "", live: co.live !== !1 },
-        edit: ed && { at: ed.at, fields: ed.fields, logo: !!ed.logo },
+        edit: ed && { at: ed.at, fields: ed.fields, logo: !!ed.logo, media: ed.media || null },
+        media: { gallery: co.gallery || [], bg: co.bg || "", videos: co.videos || [] },
         stats: { views7: trfSum("co", co.slug, 7), views30: trfSum("co", co.slug, 30), msgs30: trfSum("msg", co.slug, 30), stamps30: trfSum("stamp", co.slug, 30), opens30: trfOpens(30) },
         weeks: bizWeeks(S, co.slug), weekInfo: sup.weekInfo || "", week: weekNow(S) && weekNow(S).slug === co.slug,
       });
@@ -1641,11 +1767,39 @@ async function bizRoute(req, res, what) {
     if ("name" in f && !f.name) return fail(res, 400, "The business needs a name.");
     let logo = "";
     if (b.logo && b.logo.b64) { logo = pubFromB64(b.logo.b64, b.logo.type); if (!logo) return fail(res, 400, "Send a PNG, JPG or WEBP picture up to 1.5 MB."); }
+    // (1.35.0) pictures, the short background loop and videos: only files this business already has or uploaded itself
+    let media = null;
+    if (b.media && typeof b.media === "object") {
+      const up = S.bizUp || {}, mine = (file, kind) => (kind === "gallery" ? (co.gallery || []).includes(file) : file === co.bg) || (up[file] && up[file].slug === co.slug);
+      media = {};
+      if (Array.isArray(b.media.gallery)) {
+        media.gallery = b.media.gallery.filter((g) => /^[0-9a-f]{16}\.(png|jpg|webp)$/.test(g) && mine(g, "gallery")).slice(0, 10);
+      }
+      if ("bg" in b.media) media.bg = /^[0-9a-f]{16}\.(mp4|webm)$/.test(b.media.bg || "") && mine(b.media.bg, "bg") ? b.media.bg : "";
+      if (Array.isArray(b.media.videos)) {
+        const have = (co.videos || []).reduce((o, v) => ((o[v.id] = v), o), {});
+        media.videos = b.media.videos.slice(0, 3).map((v) => {
+          const id = String((v && v.id) || ""), old = have[id], u = up[id];
+          if (!/^[0-9a-f]{24}$/.test(id) || !(old || (u && u.slug === co.slug && u.kind === "video"))) return null;
+          const poster = /^[0-9a-f]{16}\.(png|jpg|webp)$/.test((v && v.poster) || "") && (up[v.poster] && up[v.poster].slug === co.slug || (old && old.poster === v.poster)) ? v.poster : (old && old.poster) || "";
+          return { id, title: clip(v.title, 80).trim() || (old && old.title) || "Video", sec: (old && old.sec) || (u && u.sec) || Math.min(1205, Math.max(0, Math.round(+v.sec || 0))), ext: (old && old.ext) || (u && u.ext) || "mp4", poster };
+        }).filter(Boolean);
+      }
+    }
     S.bizEdits = (S.bizEdits || []).filter((x) => x.slug !== co.slug);
-    S.bizEdits.push({ id: id36(), slug: co.slug, name: co.name, by: who.email, at: Date.now(), fields: f, logo });
+    S.bizEdits.push({ id: id36(), slug: co.slug, name: co.name, by: who.email, at: Date.now(), fields: f, logo, media });
     pubSave();
     pubEvent("form", "Edit to check: " + co.name, "The business changed its card. Check it on the Rig tab, then publish.", "biz");
     return json(res, 200, { ok: !0 });
+  }
+  if (what === "pic") {
+    const up = (S.bizUp = S.bizUp || {});
+    if (Object.values(up).filter((x) => x.slug === co.slug && x.kind === "pic").length >= 60) return fail(res, 400, "Too many pictures were uploaded. Send your changes for approval first.");
+    const file = pubFromB64(b.b64, b.type);
+    if (!file) return fail(res, 400, "Send a PNG, JPG or WEBP picture up to 1.5 MB.");
+    up[file] = { slug: co.slug, kind: "pic", at: Date.now() };
+    pubSave();
+    return json(res, 200, { file });
   }
   if (what === "week") {
     const wk = bizWeeks(S, co.slug).find((w) => w.from === String(b.week || ""));
@@ -2049,7 +2203,9 @@ async function inboxRoute(req, res) {
   }
   if (req.method === "POST" && url.pathname === "/pair") return json(res, 200, pairUse(req, await jsonBody(req, 2000)));
   if (req.method === "POST" && /^\/acct\/(google|load|save|delete|ping)$/.test(url.pathname)) return acctRoute(req, res, url.pathname.slice(6));
-  if (req.method === "POST" && /^\/biz\/(me|apply|save|week)$/.test(url.pathname)) return bizRoute(req, res, url.pathname.slice(5));
+  if (req.method === "POST" && /^\/biz\/(me|apply|save|week|pic)$/.test(url.pathname)) return bizRoute(req, res, url.pathname.slice(5));
+  if (req.method === "POST" && url.pathname === "/biz/up") return bizUp(req, res, url);
+  if (req.method === "GET" && /^\/(pm|v)\/[0-9a-z.]{16,40}$/.test(url.pathname)) return bizServe(req, res, url);
   if (req.method === "POST" && /^\/chat\/(join|list|send|del)$/.test(url.pathname)) return chatPubRoute(req, res, url.pathname.slice(6));
   if (req.method !== "POST" || !["/apply", "/message", "/form", "/support"].includes(url.pathname)) return fail(res, 404, "Not here.");
   const b = await jsonBody(req, 2.2e6),
@@ -3469,6 +3625,12 @@ async function route(req, res) {
           "name" in f && f.name && f.name !== c.name && ((c.name = f.name), (c.slug = c.slug));
           companyFields(c, f);
           e.logo && (c.logo = e.logo);
+          if (e.media) {
+            const md = e.media;
+            md.gallery && (c.gallery = md.gallery);
+            "bg" in md && (c.bg = md.bg || "");
+            md.videos && (c.videos = md.videos);
+          }
           c.u = Date.now();
           pubEvent("company", c.name + " changed its card", "Publish to put it on the website.", c.id);
         }
@@ -3488,6 +3650,8 @@ async function route(req, res) {
         const from = /^\d{4}-\d\d-\d\d$/.test(b.from || "") ? monOf(new Date(b.from + "T12:00:00").getTime()) : monOf(Date.now());
         S.weeks.forEach((x) => x.from === from && x.status === "paid" && (x.status = "no"));
         S.weeks.push({ id: id36(), slug: c.slug, name: c.name, from, at: Date.now(), ref: "", status: "paid", by: "owner", paidAt: Date.now() });
+      } else if (b.act === "default") {
+        S.defaultCo = b.slug && S.companies.some((x) => x.slug === b.slug) ? b.slug : "";
       } else if (b.act === "clearweek") {
         S.weeks.forEach((x) => x.slug === b.slug && x.status === "paid" && x.from === monOf(Date.now()) && (x.status = "no"));
       } else if (b.act === "owners") {
