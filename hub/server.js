@@ -18,7 +18,7 @@ const http = require("http"),
   { readTags } = require("./tags.js"),
   { __wbReminders } = require("./reminders.js");
 
-const VERSION = "1.31.0";
+const VERSION = "1.32.0";
 const HOME = process.env.WB_HUB_HOME || path.join(__dirname, "..");
 const CONF = process.env.WB_HUB_CONFIG || path.join(HOME, "hub.json");
 const APP = "https://tonystarkofficial1111-web.github.io";
@@ -1309,7 +1309,7 @@ function pubData() {
     inbox: C.inbox && C.inboxUrl ? C.inboxUrl : "",
     google: (C.google && C.google.clientId) || "",
     trails: (S.trails || []).filter((t) => t.on !== !1 && t.stops.length >= 2).map((t) => ({ id: t.id, title: t.title, desc: t.desc || "", reward: t.reward || "", stops: t.stops.filter((x) => live.some((c) => c.slug === x)) })),
-    support: S.support && (S.support.email || (S.support.links || []).length) ? { email: S.support.email || "", links: S.support.links || [] } : null,
+    support: S.support && (S.support.email || (S.support.links || []).length || S.support.cost) ? { email: S.support.email || "", links: S.support.links || [], cost: S.support.cost || "" } : null,
     supporters: (S.supporters || []).filter((x) => x.on !== !1).sort((a, b) => b.amount - a.amount || a.at - b.at).slice(0, 100).map((x) => ({ n: x.anon ? "Anonymous" : x.name, a: x.amount })),
     today: S.dayCo && live.some((c) => c.slug === S.dayCo.slug) ? S.dayCo : null,
     stats: Object.fromEntries(live.map((c) => [c.slug, trfSum("co", c.slug, 30)]).filter((x) => x[1] >= 5)),
@@ -2851,7 +2851,8 @@ async function route(req, res) {
         const em = clip(b.email, 120),
           links = (Array.isArray(b.links) ? b.links : []).slice(0, 5).map((l) => ({ label: clip(l && l.label, 40), url: clip(l && l.url, 300) })).filter((l) => l.label && /^https:\/\/[^\s]+$/i.test(l.url));
         if (em && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) return fail(res, 400, "That email doesn't look right.");
-        S.support = { email: em, links };
+        // (1.32.0) one line the owner writes about what Workbench has cost so far; the site shows it beside the logo
+        S.support = { email: em, links, cost: clip(b.cost, 140).replace(/\s+/g, " ").trim() };
       } else return fail(res, 400, "Unknown.");
       pubSave();
       return json(res, 200, pubView(u));
