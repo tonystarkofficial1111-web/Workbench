@@ -18,7 +18,7 @@ const http = require("http"),
   { readTags } = require("./tags.js"),
   { __wbReminders } = require("./reminders.js");
 
-const VERSION = "1.33.0";
+const VERSION = "1.34.0";
 const HOME = process.env.WB_HUB_HOME || path.join(__dirname, "..");
 const CONF = process.env.WB_HUB_CONFIG || path.join(HOME, "hub.json");
 const APP = "https://tonystarkofficial1111-web.github.io";
@@ -1312,6 +1312,8 @@ function pubData() {
     support: S.support && (S.support.email || (S.support.links || []).length || S.support.cost) ? { email: S.support.email || "", links: S.support.links || [], cost: S.support.cost || "", costNote: S.support.costNote || "" } : null,
     supporters: (S.supporters || []).filter((x) => x.on !== !1).sort((a, b) => b.amount - a.amount || a.at - b.at).slice(0, 100).map((x) => ({ n: x.anon ? "Anonymous" : x.name, a: x.amount })),
     today: S.dayCo && live.some((c) => c.slug === S.dayCo.slug) ? S.dayCo : null,
+    // (1.34.0) the company of the week: the paid or chosen booking for this week, else nothing (the website then takes turns)
+    week: (() => { const b = weekNow(S); return b && live.some((c) => c.slug === b.slug) ? { slug: b.slug, from: b.from, until: weekEnd(b.from) } : null; })(),
     stats: Object.fromEntries(live.map((c) => [c.slug, trfSum("co", c.slug, 30)]).filter((x) => x[1] >= 5)),
     forms: (S.forms || []).filter((f) => f.open).map((f) => ({ slug: f.slug, title: f.title, desc: f.desc || "", kind: f.kind, fields: f.fields.map((q) => ({ id: q.id, type: q.type, label: q.label, help: q.help, req: q.req, opts: q.opts })) })),
     companies: live.map((c) => ({ id: c.id, slug: c.slug, sh2: stampHash(c.slug, c.stamp), posts: (c.posts || []).slice(0, 5).map((x) => ({ at: x.at, text: x.text })), name: c.name, category: c.category || "", description: c.description || "", city: c.city || "", address: c.address || "", phone: c.phone || "", email: c.email || "", website: c.website || "", socials: c.socials || {}, deal: c.deal || "", code: c.code || "", featured: !!c.featured, logo: m(c.logo) })),
@@ -1559,6 +1561,105 @@ function acctLimit(req, n) {
   a.push(now);
   acctHits.set(ip, a);
   acctHits.size > 5000 && acctHits.clear();
+}
+// ---- (1.34.0) business sign-in: a company's own page on Workbench ---------------------------------------------------------------
+// A business signs in with the same Google sign-in as everyone, applies once (you approve it on the Rig tab), and then sees only its own
+// numbers, edits its own card (every edit waits for your approval), and can ask for a week as company of the week (paid by check or by
+// the arrangement you write; it counts once you mark it paid). Nothing here shows one business another's numbers.
+const monOf = (t) => { const d = new Date(t); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return dayKey(d.getTime() + 1); };
+const weekEnd = (from) => dayKey(new Date(from + "T12:00:00").getTime() + 6 * 864e5);
+const weekNow = (S) => (S.weeks || []).find((w) => w.status === "paid" && w.from === monOf(Date.now()));
+function bizWho(b) {
+  const id = acctCheck(b && b.token);
+  if (!id) throw Object.assign(new Error("Sign in with Google again."), { code: 401 });
+  const A = acctRead(acctFile(id), null);
+  if (!A || !A.email) throw Object.assign(new Error("Sign in with Google again."), { code: 401 });
+  return { id, email: String(A.email).toLowerCase(), name: A.name || "" };
+}
+const bizCo = (S, email) => S.companies.find((c) => (c.owners || []).includes(email));
+function bizClean(b) {
+  const o = {};
+  for (const [k, n] of [["name", 80], ["category", 40], ["description", 1500], ["city", 80], ["address", 160], ["phone", 40], ["email", 120], ["deal", 200], ["code", 40]]) k in b && (o[k] = clip(b[k], n).trim());
+  "website" in b && (o.website = webUrl(b.website) || "");
+  "socials" in b && (o.socials = socialsOf(b.socials));
+  return o;
+}
+function trfOpens(days) {
+  const T = trfLoad(), from = dayKey(Date.now() - days * 864e5);
+  let n = 0;
+  for (const [k, d] of Object.entries(T.days)) k >= from && (n += d.open || 0);
+  return n;
+}
+function bizWeeks(S, slug) {
+  const out = [], now = Date.now();
+  for (let i = 0; i < 10; i++) {
+    const from = monOf(now + i * 7 * 864e5 + 3600e3),
+      all = (S.weeks || []).filter((w) => w.from === from && w.status !== "no"),
+      paid = all.find((w) => w.status === "paid"),
+      mine = all.find((w) => w.slug === slug);
+    out.push({ from, until: weekEnd(from), state: paid ? (paid.slug === slug ? "mine" : "taken") : mine ? "asked" : "free", ref: mine && mine.status === "new" ? mine.ref : "" });
+  }
+  return out;
+}
+async function bizRoute(req, res, what) {
+  acctLimit(req, 240);
+  const b = await jsonBody(req, 2.2e6), who = bizWho(b), S = pubLoad(), co = bizCo(S, who.email);
+  if (what === "me") {
+    if (co) {
+      const ed = (S.bizEdits || []).find((x) => x.slug === co.slug) || null,
+        sup = S.support || {};
+      return json(res, 200, {
+        state: "company", email: who.email,
+        company: { slug: co.slug, name: co.name, category: co.category || "", description: co.description || "", city: co.city || "", address: co.address || "", phone: co.phone || "", email: co.email || "", website: co.website || "", socials: co.socials || {}, deal: co.deal || "", code: co.code || "", logo: co.logo ? "media/" + co.logo : "", live: co.live !== !1 },
+        edit: ed && { at: ed.at, fields: ed.fields, logo: !!ed.logo },
+        stats: { views7: trfSum("co", co.slug, 7), views30: trfSum("co", co.slug, 30), msgs30: trfSum("msg", co.slug, 30), stamps30: trfSum("stamp", co.slug, 30), opens30: trfOpens(30) },
+        weeks: bizWeeks(S, co.slug), weekInfo: sup.weekInfo || "", week: weekNow(S) && weekNow(S).slug === co.slug,
+      });
+    }
+    const app = S.responses.find((r) => r.ownerEmail === who.email && r.status === "new");
+    return json(res, 200, { state: app ? "pending" : "none", email: who.email, name: who.name, at: app ? app.at : 0 });
+  }
+  if (what === "apply") {
+    if (co) return fail(res, 400, "This Google account already has a business page.");
+    if (S.responses.some((r) => r.ownerEmail === who.email && r.status === "new")) return fail(res, 400, "Your application is already waiting for approval.");
+    if (S.responses.filter((r) => r.status === "new" && r.ownerEmail).length >= 200) return fail(res, 503, "Too many applications are waiting right now. Try again later.");
+    const f = bizClean(b.fields || {});
+    if (!f.name) return fail(res, 400, "Write the business's name.");
+    if (!f.category || !f.city) return fail(res, 400, "Write what kind of business it is and the city.");
+    const lab = { name: "Business name", category: "Kind of business", description: "About", city: "City", address: "Address", phone: "Phone", email: "Contact email", website: "Website", deal: "Deal for Workbench visitors", code: "Deal code" }, files = {}, items = [];
+    for (const k of Object.keys(lab)) f[k] && items.push({ id: k, label: lab[k], type: k === "description" ? "long" : "short", map: k === "description" ? "description" : k, value: f[k] });
+    for (const [k, u] of Object.entries(f.socials || {})) items.push({ id: "s-" + k, label: k, type: "link", map: k, value: u });
+    if (b.logo && b.logo.b64) { const file = pubFromB64(b.logo.b64, b.logo.type); file && ((files.logo = file), items.push({ id: "logo", label: "Logo", type: "image", map: "logo", value: file })); }
+    S.responses.push({ id: id36(), form: "biz", slug: "company-sign-up", title: "Business application", kind: "company", at: Date.now(), items, files, status: "new", ownerEmail: who.email, ownerName: who.name });
+    pubSave();
+    pubEvent("form", "Business application: " + f.name, who.email + " asks for a business page. Check it on the Rig tab.", "biz");
+    return json(res, 200, { ok: !0, state: "pending" });
+  }
+  if (!co) return fail(res, 403, "This Google account isn't a business on Workbench.");
+  if (what === "save") {
+    const f = bizClean(b.fields || {});
+    if ("name" in f && !f.name) return fail(res, 400, "The business needs a name.");
+    let logo = "";
+    if (b.logo && b.logo.b64) { logo = pubFromB64(b.logo.b64, b.logo.type); if (!logo) return fail(res, 400, "Send a PNG, JPG or WEBP picture up to 1.5 MB."); }
+    S.bizEdits = (S.bizEdits || []).filter((x) => x.slug !== co.slug);
+    S.bizEdits.push({ id: id36(), slug: co.slug, name: co.name, by: who.email, at: Date.now(), fields: f, logo });
+    pubSave();
+    pubEvent("form", "Edit to check: " + co.name, "The business changed its card. Check it on the Rig tab, then publish.", "biz");
+    return json(res, 200, { ok: !0 });
+  }
+  if (what === "week") {
+    const wk = bizWeeks(S, co.slug).find((w) => w.from === String(b.week || ""));
+    if (!wk) return fail(res, 400, "Pick one of the weeks shown.");
+    if (wk.state === "taken") return fail(res, 400, "That week is already taken.");
+    if (wk.state === "mine" || wk.state === "asked") return fail(res, 400, "You already asked for that week.");
+    let ref;
+    do ref = "W" + crypto.randomBytes(3).toString("hex").toUpperCase(); while ((S.weeks || []).some((w) => w.ref === ref));
+    (S.weeks = S.weeks || []).push({ id: id36(), slug: co.slug, name: co.name, from: wk.from, at: Date.now(), ref, status: "new", by: who.email });
+    pubSave();
+    pubEvent("form", "Company of the week asked for: " + co.name, "Week of " + wk.from + " · reference " + ref + ". Mark it paid on the Rig tab once the payment arrives.", "biz");
+    return json(res, 200, { ok: !0, ref, weeks: bizWeeks(S, co.slug) });
+  }
+  return fail(res, 404, "Not here.");
 }
 async function acctRoute(req, res, what) {
   if (what === "google") {
@@ -1948,6 +2049,7 @@ async function inboxRoute(req, res) {
   }
   if (req.method === "POST" && url.pathname === "/pair") return json(res, 200, pairUse(req, await jsonBody(req, 2000)));
   if (req.method === "POST" && /^\/acct\/(google|load|save|delete|ping)$/.test(url.pathname)) return acctRoute(req, res, url.pathname.slice(6));
+  if (req.method === "POST" && /^\/biz\/(me|apply|save|week)$/.test(url.pathname)) return bizRoute(req, res, url.pathname.slice(5));
   if (req.method === "POST" && /^\/chat\/(join|list|send|del)$/.test(url.pathname)) return chatPubRoute(req, res, url.pathname.slice(6));
   if (req.method !== "POST" || !["/apply", "/message", "/form", "/support"].includes(url.pathname)) return fail(res, 404, "Not here.");
   const b = await jsonBody(req, 2.2e6),
@@ -2149,6 +2251,8 @@ function responseToCompany(r) {
   m.logo && (c.logo = m.logo);
   c.contact = m.contact || "";
   c.from = "form";
+  // (1.34.0) a business that applied while signed in with Google signs in to its page with that same Google account
+  r.ownerEmail && (c.owners = [String(r.ownerEmail).toLowerCase()]);
   pubSave();
   return c;
 }
@@ -2853,7 +2957,7 @@ async function route(req, res) {
         if (em && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) return fail(res, 400, "That email doesn't look right.");
         // (1.32.0) one line the owner writes about what Workbench has cost so far; the site shows it beside the logo
         // (1.33.0) the figure (a short text such as $412) and what it means, both written by the owner
-        S.support = { email: em, links, cost: clip(b.cost, 24).replace(/\s+/g, " ").trim(), costNote: clip(b.costNote, 320).replace(/\s+/g, " ").trim() };
+        S.support = { email: em, links, cost: clip(b.cost, 24).replace(/\s+/g, " ").trim(), costNote: clip(b.costNote, 320).replace(/\s+/g, " ").trim(), weekInfo: clip(b.weekInfo, 500).trim() };
       } else return fail(res, 400, "Unknown.");
       pubSave();
       return json(res, 200, pubView(u));
@@ -3345,6 +3449,52 @@ async function route(req, res) {
       if (stops.length < 2) return fail(res, 400, "Pick at least two companies for the trail.");
       Object.assign(t, { title: clip(b.title, 80), desc: clip(b.desc, 300), reward: clip(b.reward, 200), stops, on: b.on !== !1 });
       old || S.trails.push(t);
+      pubSave();
+      return json(res, 200, pubView(u));
+    }
+    case "/api/pub/biz": {
+      if (!owner) return fail(res, 403, "Only the owner.");
+      if (M !== "POST") break;
+      if (!rigCtl(req, a)) return ctlNo(res);
+      const b = await jsonBody(req, 3000),
+        S = pubLoad();
+      S.bizEdits ||= [];
+      S.weeks ||= [];
+      if (b.act === "approve" || b.act === "reject") {
+        const e = S.bizEdits.find((x) => x.id === b.id),
+          c = e && S.companies.find((x) => x.slug === e.slug);
+        if (!e) return fail(res, 404, "No such edit.");
+        if (b.act === "approve" && c) {
+          const f = e.fields || {};
+          "name" in f && f.name && f.name !== c.name && ((c.name = f.name), (c.slug = c.slug));
+          companyFields(c, f);
+          e.logo && (c.logo = e.logo);
+          c.u = Date.now();
+          pubEvent("company", c.name + " changed its card", "Publish to put it on the website.", c.id);
+        }
+        S.bizEdits = S.bizEdits.filter((x) => x.id !== e.id);
+      } else if (b.act === "paid" || b.act === "no") {
+        const w = S.weeks.find((x) => x.id === b.id);
+        if (!w) return fail(res, 404, "No such request.");
+        if (b.act === "paid") {
+          if (S.weeks.some((x) => x.from === w.from && x.status === "paid" && x.id !== w.id)) return fail(res, 400, "Another business already has that week.");
+          w.status = "paid";
+          w.paidAt = Date.now();
+          pubEvent("company", w.name + " is company of the week", "Week of " + w.from + ". Publish to show it.", w.id);
+        } else w.status = "no";
+      } else if (b.act === "setweek") {
+        const c = S.companies.find((x) => x.slug === b.slug);
+        if (!c) return fail(res, 404, "No such company.");
+        const from = /^\d{4}-\d\d-\d\d$/.test(b.from || "") ? monOf(new Date(b.from + "T12:00:00").getTime()) : monOf(Date.now());
+        S.weeks.forEach((x) => x.from === from && x.status === "paid" && (x.status = "no"));
+        S.weeks.push({ id: id36(), slug: c.slug, name: c.name, from, at: Date.now(), ref: "", status: "paid", by: "owner", paidAt: Date.now() });
+      } else if (b.act === "clearweek") {
+        S.weeks.forEach((x) => x.slug === b.slug && x.status === "paid" && x.from === monOf(Date.now()) && (x.status = "no"));
+      } else if (b.act === "owners") {
+        const c = S.companies.find((x) => x.slug === b.slug);
+        if (!c) return fail(res, 404, "No such company.");
+        c.owners = [...new Set(String(b.emails || "").toLowerCase().split(/[\s,;]+/).filter((e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)))].slice(0, 5);
+      } else return fail(res, 400, "Unknown.");
       pubSave();
       return json(res, 200, pubView(u));
     }
