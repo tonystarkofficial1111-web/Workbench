@@ -18,7 +18,7 @@ const http = require("http"),
   { readTags } = require("./tags.js"),
   { __wbReminders } = require("./reminders.js");
 
-const VERSION = "1.30.0";
+const VERSION = "1.31.0";
 const HOME = process.env.WB_HUB_HOME || path.join(__dirname, "..");
 const CONF = process.env.WB_HUB_CONFIG || path.join(HOME, "hub.json");
 const APP = "https://tonystarkofficial1111-web.github.io";
@@ -1697,10 +1697,24 @@ function liveBeat(req, b) {
   e.prev = now;
   e.last = now;
   e.a = /^[A-Za-z0-9 :·&'-]{1,40}$/.test(a) ? a : "Browsing";
+  e.pb = e.pb || 0;
   e.v = /^\d{1,2}\.\d{1,3}\.\d{1,3}$/.test(v) ? v : "";
   e.cur !== e.a && ((e.cur = e.a), (e.since = now));
   const T = trfLoad(),
     d = (T.days[dayKey()] = T.days[dayKey()] || { open: 0, ref: {}, form: {}, co: {}, sent: {}, msg: {}, stamp: {}, trail: {} });
+  // (1.31.0) which hours of the day are busy: the seconds people were on (open and in view) added to the hour they fell in, and the
+  // most people on at once in that hour. Nothing says who: only totals per hour of the day.
+  {
+    const hr = new Date(now).getHours(),
+      s = (d.ses = d.ses || { n: 0, h: new Array(24).fill(0), d: [], a: {} });
+    s.ah = s.ah || new Array(24).fill(0);
+    s.pk = s.pk || new Array(24).fill(0);
+    s.ah[hr] = (s.ah[hr] || 0) + (e.pb ? Math.min(60, (now - e.pb) / 1000) : 15);
+    s.pk[hr] = Math.max(s.pk[hr] || 0, LIVE.size);
+    e.pb = now;
+    clearTimeout(trfT);
+    trfT = setTimeout(() => writeJson(hubf("traffic.json"), T), 4000);
+  }
   if (LIVE.size > (d.livePeak || 0)) {
     d.livePeak = LIVE.size;
     clearTimeout(trfT);
@@ -1722,6 +1736,9 @@ function sesEnd(e) {
     hr = new Date(e.first).getHours();
   s.n++;
   s.h[hr] = (s.h[hr] || 0) + 1;
+  // (1.31.0) how long visits that began in each hour lasted, for the average stay by hour
+  s.hd = s.hd || new Array(24).fill(0);
+  s.hd[hr] = (s.hd[hr] || 0) + secs;
   s.d.length < 1500 && s.d.push(secs);
   for (const [a, t] of Object.entries(e.acts || {})) if (Object.keys(s.a).length < 60 || s.a[a]) s.a[a] = Math.round((s.a[a] || 0) + t);
   clearTimeout(trfT);
@@ -1736,6 +1753,9 @@ function sesStats() {
   const T = trfLoad(),
     days = [],
     h7 = new Array(24).fill(0),
+    busy = new Array(24).fill(0),
+    peak = new Array(24).fill(0),
+    hd7 = new Array(24).fill(0),
     durs = [],
     acts = {};
   for (let i = 13; i >= 0; i--) {
@@ -1745,6 +1765,9 @@ function sesStats() {
     days.push({ day: k, n: s ? s.n : 0, avg: dd.length ? Math.round(dd.reduce((a, b) => a + b, 0) / dd.length) : 0, med: dd.length ? dd[dd.length >> 1] : 0, total: dd.reduce((a, b) => a + b, 0) });
     if (s && i < 7) {
       s.h.forEach((n, j) => (h7[j] += n || 0));
+      (s.ah || []).forEach((n, j) => (busy[j] += n || 0));
+      (s.pk || []).forEach((n, j) => (peak[j] = Math.max(peak[j], n || 0)));
+      (s.hd || []).forEach((n, j) => (hd7[j] += n || 0));
       durs.push(...s.d);
       for (const [a, t] of Object.entries(s.a || {})) acts[a] = (acts[a] || 0) + t;
     }
@@ -1754,6 +1777,9 @@ function sesStats() {
   return {
     days,
     hours: h7,
+    busy: busy.map((n) => Math.round(n / 60)),
+    peak,
+    stay: h7.map((n, j) => (n ? Math.round(hd7[j] / n) : 0)),
     week: { n: durs.length, avg: durs.length ? Math.round(durs.reduce((a, b) => a + b, 0) / durs.length) : 0, med: durs.length ? durs[durs.length >> 1] : 0, longest: durs.length ? durs[durs.length - 1] : 0, total: durs.reduce((a, b) => a + b, 0), buckets: buck },
     acts: Object.entries(acts).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([a, t]) => ({ a, t: Math.round(t) })),
   };
