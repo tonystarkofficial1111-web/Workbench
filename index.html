@@ -39840,6 +39840,12 @@ function __axCss() {
     T + " .ax-feat .ax-also-t{min-width:0}",
     T + " .ax-feat .ax-free{margin:12px 4px 2px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;text-align:left;padding:12px 18px;border-radius:16px;border:1px solid #5eead466;background:linear-gradient(180deg,#0f1c1c,#0b1515);box-shadow:0 0 22px #5eead433,inset 0 0 18px #5eead412;color:#c9ced8;font:500 14px/1.4 var(--sx-font,Inter,system-ui,sans-serif)}",
     T + " .ax-feat .ax-free[hidden]{display:none}",
+    T + " .ax-feat .ax-rec{margin:18px 4px 2px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;text-align:left;padding:12px 18px;border-radius:16px;border:1px solid #9fd2ff66;background:linear-gradient(180deg,#0f1a26,#0b121b);box-shadow:0 0 22px #9fd2ff26,inset 0 0 18px #9fd2ff10;color:#c9ced8;font:500 14px/1.4 var(--sx-font,Inter,system-ui,sans-serif)}",
+    T + " .ax-feat .ax-rec .ax-fi{flex:none;display:flex;align-items:center;justify-content:center;width:42px;height:42px;border-radius:12px;background:#0d1c2b;border:1px solid #9fd2ff33}",
+    T + " .ax-feat .ax-rec .ax-rec-t{flex:1 1 220px;min-width:0}",
+    T + " .ax-feat .ax-rec b{color:#fff;font-weight:650}",
+    T + " .ax-feat .ax-rec small{display:block;margin-top:3px;color:#8fb3cf;font-size:12.5px}",
+    T + " .ax-feat .ax-rec button.ax-rec-go{flex:none;height:38px;padding:0 18px!important;border-radius:10px!important;border:1px solid #9fd2ffaa!important;background:#9fd2ff!important;color:#06121f!important;font:700 14px var(--sx-font,Inter,system-ui,sans-serif)!important;cursor:pointer}",
     T + " .ax-feat .ax-ed{margin:12px 4px 2px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;text-align:left;padding:12px 18px;border-radius:16px;border:1px solid #ffd34d66;background:linear-gradient(180deg,#1c1808,#14110a);box-shadow:0 0 22px #ffd34d2e,inset 0 0 18px #ffd34d12;color:#c9ced8;font:500 14px/1.4 var(--sx-font,Inter,system-ui,sans-serif)}",
     T + " .ax-feat .ax-ed .ax-fi{flex:none;display:flex;align-items:center;justify-content:center;width:42px;height:42px;border-radius:12px;background:#221d0b;border:1px solid #ffd34d33}",
     T + " .ax-feat .ax-ed .ax-ed-t{flex:1 1 220px;min-width:0}",
@@ -40039,6 +40045,8 @@ function __axAlso() {
   let u = typeof __wbRefractUrl === "string" && /^https:\/\//i.test(__wbRefractUrl) ? __wbRefractUrl : "",
     name = u ? '<a href="' + __wbEsc(u) + '" target="_blank" rel="noopener noreferrer">Refract</a>' : "Refract";
   return (
+    // (7.7.1) "Want to recommend a game?" is the first of the rows under the flagship cards
+    '<div class="ax-rec"><span class="ax-fi" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#9fd2ff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.6 5.6 6 .7-4.5 4.1 1.2 6L12 16.4 6.7 19.4l1.2-6L3.4 9.3l6-.7z"/></svg></span><span class="ax-rec-t"><b>Want to recommend a game?</b><small>Tell us its name, what it is like and how you win. Good ideas get built.</small></span><button type="button" class="ax-rec-go">Suggest a game</button></div>' +
     '<div class="ax-also"><span class="ax-star" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#fff" stroke-width="1.7" stroke-linejoin="round"><path d="M12 2.5c.9 5.4 4.1 8.6 9.5 9.5-5.4.9-8.6 4.1-9.5 9.5-.9-5.4-4.1-8.6-9.5-9.5 5.4-.9 8.6-4.1 9.5-9.5z"/></svg></span><span class="ax-also-t">Also try out <b>' + name + "</b><small>Tell them you were sent by Stark Enterprises :)</small></span></div>" +
     '<div class="ax-ed"><span class="ax-fi" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#ffd34d" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4.5" width="19" height="15" rx="2.5"/><path d="M2.5 9.5h19M7 4.5l-2 5M12 4.5l-2 5M17 4.5l-2 5"/></svg></span><span class="ax-ed-t"><b>Studio</b><small>Your clips, kill clips and the editor in one place: looks, keyframes, speed ramps, text, music, and export up to 1440p at 60 fps.</small></span><button type="button" class="ax-ed-go">Open the editor</button></div>' +
     '<div class="ax-free" hidden></div>'
@@ -40088,6 +40096,7 @@ function __axFeatSync() {
     let b = e.target.closest("[data-fsub]");
     b && __axOpenSub(b.dataset.fsub);
     e.target.closest(".ax-ed-go") && __edOpen();
+    e.target.closest(".ax-rec-go") && __axIdeaOpen();
   });
   // the clips play by themselves while their card is on screen (6.23), and rest when it is not
   try {
@@ -40099,7 +40108,7 @@ function __axFeatSync() {
   // (7.4.0) the flagship shares its row with "Want to recommend a game?", the same height
   R = document.createElement("div");
   R.className = "ax-featrow";
-  R.append(f, __axIdeaEl());
+  R.append(f);
   h.after(R);
   typeof __axFreeFill === "function" && setTimeout(__axFreeFill, 60);
   __axFeatCss();
@@ -40196,7 +40205,7 @@ function __axFeatCss() {
 @keyframes axspin{to{--axa:360deg}}
 #tab-arcade#tab-arcade#tab-arcade#tab-arcade .ax-seg button.subtab[hidden]{display:none!important}
 /* 6.23: one quiet panel, a small label, a hairline; the colour comes from the cards */
-#tab-arcade .ax-featrow{display:grid;grid-template-columns:minmax(0,1fr) 135px;gap:16px;align-items:stretch;margin:26px 0 22px}
+#tab-arcade .ax-featrow{display:grid;grid-template-columns:minmax(0,1fr);gap:16px;align-items:stretch;margin:26px 0 22px}
 #tab-arcade .ax-featrow>.ax-feat{margin:0!important}
 @media (max-width:1180px){#tab-arcade .ax-featrow{grid-template-columns:minmax(0,1fr)}}
 #tab-arcade .ax-idea{display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:10px;padding:14px 12px;text-align:left;border-radius:20px;border:1px solid #ffffff14;background:linear-gradient(180deg,#ffffff09,#ffffff03 60%,#ffffff05);box-shadow:inset 0 1px 0 #ffffff12,0 18px 50px #00000059;color:#e8eef6}
