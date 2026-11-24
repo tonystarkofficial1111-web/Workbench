@@ -18,7 +18,7 @@ const http = require("http"),
   { readTags } = require("./tags.js"),
   { __wbReminders } = require("./reminders.js");
 
-const VERSION = "1.36.0";
+const VERSION = "1.37.0";
 const HOME = process.env.WB_HUB_HOME || path.join(__dirname, "..");
 const CONF = process.env.WB_HUB_CONFIG || path.join(HOME, "hub.json");
 const APP = "https://tonystarkofficial1111-web.github.io";
@@ -1749,8 +1749,28 @@ async function bizRoute(req, res, what) {
         ads: bizWeeks(S, co.slug, S.ads), ad: co.ad || null, adEdit: ed && ed.ad ? ed.ad : null, adNow: !!(adNow(S) && adNow(S).slug === co.slug), prices: bizPrices(S),
       });
     }
-    const app = S.responses.find((r) => r.ownerEmail === who.email && r.status === "new");
-    return json(res, 200, { state: app ? "pending" : "none", email: who.email, name: who.name, at: app ? app.at : 0 });
+    const app = S.responses.find((r) => r.ownerEmail === who.email && r.status === "new"),
+      lk = (S.linkReqs || []).find((x) => x.email === who.email && x.status === "new");
+    return json(res, 200, { state: app ? "pending" : lk ? "linkwait" : "none", email: who.email, name: who.name, at: app ? app.at : lk ? lk.at : 0, link: lk ? { name: lk.name, at: lk.at } : null });
+  }
+  if (what === "link") {
+    // (1.37.0) "My business is already listed": linked at once when this Google email is the listing's own email, else the owner approves
+    if (co) return fail(res, 400, "This Google account already has a business page.");
+    const c2 = S.companies.find((x) => x.slug === String(b.slug || "") && x.live !== !1);
+    if (!c2) return fail(res, 404, "Pick your business from the list.");
+    if (c2.email && String(c2.email).toLowerCase().trim() === who.email) {
+      c2.owners = [...new Set([...(c2.owners || []), who.email])].slice(0, 5);
+      pubSave();
+      pubEvent("company", c2.name + " linked a Google account", who.email + " signs in for " + c2.name + " (it is the email on the listing).", c2.id);
+      return json(res, 200, { ok: !0, state: "company" });
+    }
+    S.linkReqs = (S.linkReqs || []).filter((x) => !(x.email === who.email && x.status === "new"));
+    if (S.linkReqs.filter((x) => x.status === "new").length >= 200) return fail(res, 503, "Too many requests are waiting right now. Try again later.");
+    S.linkReqs.unshift({ id: id36(), slug: c2.slug, name: c2.name, email: who.email, who: who.name, note: clip(b.note, 300).trim(), at: Date.now(), status: "new" });
+    S.linkReqs.length > 400 && (S.linkReqs.length = 400);
+    pubSave();
+    pubEvent("form", "Link request: " + c2.name, who.email + " says they run " + c2.name + ". Approve it on Rig Start.", "biz");
+    return json(res, 200, { ok: !0, state: "linkwait" });
   }
   if (what === "claim") {
     if (co) return fail(res, 400, "This Google account already has a business page.");
@@ -2249,15 +2269,27 @@ async function inboxRoute(req, res) {
   }
   if (req.method === "POST" && url.pathname === "/pair") return json(res, 200, pairUse(req, await jsonBody(req, 2000)));
   if (req.method === "POST" && /^\/acct\/(google|load|save|delete|ping)$/.test(url.pathname)) return acctRoute(req, res, url.pathname.slice(6));
-  if (req.method === "POST" && /^\/biz\/(me|apply|claim|save|week|ad|adsave|pic)$/.test(url.pathname)) return bizRoute(req, res, url.pathname.slice(5));
+  if (req.method === "POST" && /^\/biz\/(me|apply|claim|link|save|week|ad|adsave|pic)$/.test(url.pathname)) return bizRoute(req, res, url.pathname.slice(5));
   if (req.method === "POST" && url.pathname === "/biz/up") return bizUp(req, res, url);
   if (req.method === "GET" && /^\/(pm|v)\/[0-9a-z.]{16,40}$/.test(url.pathname)) return bizServe(req, res, url);
   if (req.method === "POST" && /^\/chat\/(join|list|send|del)$/.test(url.pathname)) return chatPubRoute(req, res, url.pathname.slice(6));
-  if (req.method !== "POST" || !["/apply", "/message", "/form", "/support"].includes(url.pathname)) return fail(res, 404, "Not here.");
+  if (req.method !== "POST" || !["/apply", "/message", "/form", "/support", "/idea"].includes(url.pathname)) return fail(res, 404, "Not here.");
   const b = await jsonBody(req, 2.2e6),
     S = pubLoad();
   if (b.website2) return json(res, 200, { ok: !0 });
   inboxLimit(req);
+  if (url.pathname === "/idea") {
+    // (1.37.0) "Want to recommend a game?": anyone, no sign-in; lands in the one inbox on Rig Start
+    if ((S.ideas || []).filter((x) => x.status === "new").length >= 300) return fail(res, 503, "Too many ideas are waiting right now. Try again later.");
+    const idea = { id: id36(), at: Date.now(), name: clip(b.name, 80).trim(), desc: clip(b.desc, 600).trim(), goal: clip(b.goal, 400).trim(), from: clip(b.from, 120).trim(), status: "new" };
+    if (!idea.name) return fail(res, 400, "Give the game a name.");
+    if (!idea.desc && !idea.goal) return fail(res, 400, "Say a little about it.");
+    (S.ideas ||= []).unshift(idea);
+    S.ideas.length > 400 && (S.ideas.length = 400);
+    writeJson(hubf("public.json"), S);
+    pubNotify("Game idea: " + idea.name, (idea.desc || idea.goal).slice(0, 140), "idea", idea.id, [["done", "Seen"]]);
+    return json(res, 200, { ok: !0 });
+  }
   if (url.pathname === "/support") {
     // someone says they want to support Workbench (or already did): kept as a pledge until the owner has checked the payment
     if ((S.pledges || []).filter((x) => x.status === "new").length >= 300) return fail(res, 503, "Too many are waiting right now. Try again later.");
@@ -2282,7 +2314,10 @@ async function inboxRoute(req, res) {
     if (S.responses.filter((r) => r.status === "new").length >= 1000) return fail(res, 503, "Too many answers are waiting right now. Try again later.");
     let f, body = b;
     if (url.pathname === "/form") f = S.forms.find((x) => x.slug === clip(b.form, 60) && x.open);
-    else {
+    else f = null;
+    // (1.37.0) a business is listed only through Company sign-in (a Google account), never through a plain form
+    if (url.pathname === "/apply" || (f && f.kind === "company")) return fail(res, 400, "To list a business, use Company sign-in on Workbench (it needs a Google account).");
+    if (url.pathname !== "/form") {
       // a 6.6 page's "List your company": the same answers, into the company sign-up form
       f = S.forms.find((x) => x.kind === "company" && x.open);
       const A = {},
@@ -3662,6 +3697,21 @@ async function route(req, res) {
         S.defaultCo = b.slug && S.companies.some((x) => x.slug === b.slug) ? b.slug : "";
       } else if (b.act === "clearweek") {
         S.weeks.forEach((x) => x.slug === b.slug && x.status === "paid" && x.from === monOf(Date.now()) && (x.status = "no"));
+      } else if (b.act === "link" || b.act === "linkno") {
+        const r = (S.linkReqs || []).find((x) => x.id === b.id),
+          c = r && S.companies.find((x) => x.slug === r.slug);
+        if (!r) return fail(res, 404, "No such request.");
+        if (b.act === "link") {
+          if (!c) return fail(res, 404, "That company isn't listed any more.");
+          c.owners = [...new Set([...(c.owners || []), r.email])].slice(0, 5);
+          r.status = "ok";
+          pubEvent("company", r.email + " now signs in for " + c.name, "Approved from the inbox.", c.id);
+        } else r.status = "no";
+      } else if (b.act === "idea") {
+        const r = (S.ideas || []).find((x) => x.id === b.id);
+        if (!r) return fail(res, 404, "No such idea.");
+        r.status = b.do === "del" ? "gone" : "seen";
+        S.ideas = S.ideas.filter((x) => x.status !== "gone");
       } else if (b.act === "claim") {
         // a one-time code that links a Google account to a company that is already listed (shown once; kept only as a scramble)
         const c = S.companies.find((x) => x.slug === b.slug);
