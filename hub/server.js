@@ -18,7 +18,7 @@ const http = require("http"),
   { readTags } = require("./tags.js"),
   { __wbReminders } = require("./reminders.js");
 
-const VERSION = "1.35.0";
+const VERSION = "1.36.0";
 const HOME = process.env.WB_HUB_HOME || path.join(__dirname, "..");
 const CONF = process.env.WB_HUB_CONFIG || path.join(HOME, "hub.json");
 const APP = "https://tonystarkofficial1111-web.github.io";
@@ -89,7 +89,7 @@ const safeName = (s) =>
 const userDir = (u, kind) => path.join(C.root, "Users", u.dir, kind || "");
 const canWork = (u) => !!u && (u.role === "owner" || !!u.work);
 const canBrowse = (u) => !!u && (u.role === "owner" || !!u.browser);
-const pub = (u) => ({ id: u.id, name: u.name, role: u.role, work: canWork(u), artist: !!u.artist, browser: canBrowse(u) });
+const pub = (u) => ({ id: u.id, name: u.name, role: u.role, work: canWork(u), browser: canBrowse(u) });
 function addUser(name, pin, role, work) {
   name = String(name || "").trim();
   if (!name || !/^\d{4,12}$/.test(String(pin))) throw new Error("A name and a PIN of 4 to 12 digits are needed.");
@@ -1073,8 +1073,8 @@ async function systemInfo(req) {
   };
 }
 
-// ---- Discover and Spotlight: what the website shows everyone (1.3.0) ------------------------------
-// Companies, their applications and messages, and the Spotlight artist and tracks live on the rig
+// ---- Discover: what the website shows everyone (1.3.0) ------------------------------
+// Companies, their applications and messages, live on the rig
 // (.hub/public.json and the Public folder). "Publish" puts what's live and approved on the
 // Workbench website through GitHub, so visitors see it even while the rig is off. A small public
 // door, the inbox (its own port, shared to the internet with Tailscale Funnel), only takes company
@@ -1083,9 +1083,12 @@ const PUBDIR = () => path.join(C.root, "Public");
 let P = null;
 function pubLoad() {
   if (!P) {
-    P = Object.assign({ companies: [], apps: [], msgs: [], artist: { name: "", bio: "", photo: "", socials: {} }, tracks: [], published: { at: 0, commit: "", files: {} }, radioEpoch: 0, forms: null, responses: [], events: [], changedAt: 0, pledges: [], supporters: [] }, readJson(hubf("public.json"), {}));
+    P = Object.assign({ companies: [], apps: [], msgs: [], published: { at: 0, commit: "", files: {} }, forms: null, responses: [], events: [], changedAt: 0, pledges: [], supporters: [] }, readJson(hubf("public.json"), {}));
     // 1.4.0: ready-made forms, and 1.3.0's applications become answers to the company sign-up form
     if (!Array.isArray(P.forms)) P.forms = formDefaults();
+    // 1.36.0: Spotlight is gone: drop its artist, songs and sign-up form
+    delete P.artist; delete P.tracks; delete P.radioEpoch;
+    P.forms = P.forms.filter((f) => f.kind !== "artist");
     const cf = P.forms.find((f) => f.kind === "company");
     if (cf && P.apps.length) {
       for (const a of P.apps)
@@ -1168,12 +1171,12 @@ function companySave(b) {
   return c;
 }
 // a picture or a song saved under its own fingerprint, so publishing never sends one twice
-const PUBTYPES = { png: "img", jpg: "img", jpeg: "img", webp: "img", mp3: "song", m4a: "song", aac: "song", ogg: "song", oga: "song", opus: "song", wav: "song", flac: "song" };
+const PUBTYPES = { png: "img", jpg: "img", jpeg: "img", webp: "img" };
 async function pubFile(req, name, kind) {
   const ext = path.extname(String(name || "")).slice(1).toLowerCase();
-  if (PUBTYPES[ext] !== (kind === "song" ? "song" : "img")) throw Object.assign(new Error(kind === "song" ? "Send an MP3, M4A, OGG, WAV or FLAC file." : "Send a PNG, JPG or WEBP picture."), { code: 400 });
-  const max = kind === "song" ? 80e6 : 6e6;
-  if (+req.headers["content-length"] > max) throw Object.assign(new Error(kind === "song" ? "Songs up to 80 MB." : "Pictures up to 6 MB."), { code: 400 });
+  if (PUBTYPES[ext] !== "img") throw Object.assign(new Error("Send a PNG, JPG or WEBP picture."), { code: 400 });
+  const max = 6e6;
+  if (+req.headers["content-length"] > max) throw Object.assign(new Error("Pictures up to 6 MB."), { code: 400 });
   const tmp = path.join(PUBDIR(), ".in-" + id36());
   const size = await receive(req, tmp);
   if (size > max) throw (await fsp.rm(tmp, { force: !0 }), Object.assign(new Error("That file is too big."), { code: 400 }));
@@ -1300,9 +1303,7 @@ async function pubSetup(b) {
 function pubData() {
   const S = pubLoad(),
     m = (f) => (f ? "media/" + f : ""),
-    live = S.companies.filter((c) => c.live !== !1),
-    tracks = S.tracks.filter((t) => t.status === "approved" && t.file);
-  S.radioEpoch ||= Date.now();
+    live = S.companies.filter((c) => c.live !== !1);
   return {
     v: 1,
     at: Date.now(),
@@ -1320,10 +1321,15 @@ function pubData() {
       const d = S.defaultCo && live.find((c) => c.slug === S.defaultCo), mo = monOf(Date.now());
       return d ? { slug: d.slug, from: mo, until: weekEnd(mo), def: !0 } : null;
     })(),
+    prices: bizPrices(S),
+    // (1.36.0) the ad of the week: only a paid booking whose ad the owner approved
+    ad: (() => {
+      const b = adNow(S), c = b && live.find((x) => x.slug === b.slug);
+      return c && c.ad && c.ad.title ? { slug: c.slug, name: c.name, from: b.from, until: weekEnd(b.from), title: c.ad.title, text: c.ad.text || "", btn: c.ad.btn || "Visit", link: c.ad.link, img: m(c.ad.img) } : null;
+    })(),
     stats: Object.fromEntries(live.map((c) => [c.slug, trfSum("co", c.slug, 30)]).filter((x) => x[1] >= 5)),
     forms: (S.forms || []).filter((f) => f.open).map((f) => ({ slug: f.slug, title: f.title, desc: f.desc || "", kind: f.kind, fields: f.fields.map((q) => ({ id: q.id, type: q.type, label: q.label, help: q.help, req: q.req, opts: q.opts })) })),
     companies: live.map((c) => ({ id: c.id, slug: c.slug, sh2: stampHash(c.slug, c.stamp), posts: (c.posts || []).slice(0, 5).map((x) => ({ at: x.at, text: x.text })), name: c.name, category: c.category || "", description: c.description || "", city: c.city || "", address: c.address || "", phone: c.phone || "", email: c.email || "", website: c.website || "", socials: c.socials || {}, deal: c.deal || "", code: c.code || "", featured: !!c.featured, logo: m(c.logo), gallery: (c.gallery || []).map(m), bg: m(c.bg), videos: (c.videos || []).map((v) => ({ id: v.id, title: v.title || "", sec: v.sec || 0, poster: m(v.poster) })) })),
-    spotlight: tracks.length || S.artist.name ? { artist: { name: S.artist.name || "", bio: S.artist.bio || "", photo: m(S.artist.photo), socials: S.artist.socials || {} }, epoch: S.radioEpoch, tracks: tracks.map((t) => ({ id: t.id, title: t.title, dur: t.dur || 0, file: m(t.file), cover: m(t.cover), at: t.at })) } : null,
   };
 }
 let publishing = null;
@@ -1355,10 +1361,7 @@ function publishRun() {
       c.bg && want.add(c.bg.slice(6));
       (c.videos || []).forEach((v) => v.poster && want.add(v.poster.slice(6)));
     }
-    if (data.spotlight) {
-      data.spotlight.artist.photo && want.add(data.spotlight.artist.photo.slice(6));
-      for (const t of data.spotlight.tracks) (want.add(t.file.slice(6)), t.cover && want.add(t.cover.slice(6)));
-    }
+    data.ad && data.ad.img && want.add(data.ad.img.slice(6));
     const ref = await gh("/git/ref/heads/" + cfg.branch),
       base = ref.object.sha,
       commit = await gh("/git/commits/" + base),
@@ -1373,13 +1376,13 @@ function publishRun() {
     }
     tree.push({ path: dir + "/data.json", mode: "100644", type: "blob", content: JSON.stringify(data) });
     const nt = await gh("/git/trees", { method: "POST", body: { base_tree: commit.tree.sha, tree } }),
-      nc = await gh("/git/commits", { method: "POST", body: { message: "Workbench: publish Discover and Spotlight", tree: nt.sha, parents: [base] } });
+      nc = await gh("/git/commits", { method: "POST", body: { message: "Workbench: publish Discover", tree: nt.sha, parents: [base] } });
     await gh("/git/refs/heads/" + cfg.branch, { method: "PATCH", body: { sha: nc.sha } });
-    S.published = { at: Date.now(), commit: nc.sha, files: sent, companies: data.companies.length, tracks: data.spotlight ? data.spotlight.tracks.length : 0, forms: data.forms.length, formU: Object.fromEntries((S.forms || []).filter((f) => f.open).map((f) => [f.id, f.u || f.at || 1])) };
+    S.published = { at: Date.now(), commit: nc.sha, files: sent, companies: data.companies.length, forms: data.forms.length, formU: Object.fromEntries((S.forms || []).filter((f) => f.open).map((f) => [f.id, f.u || f.at || 1])) };
     delete S.inboxMoved;
     writeJson(hubf("public.json"), S);
-    pubEvent("publish", "Published to the website", data.companies.length + " companies, " + S.published.tracks + " songs, " + data.forms.length + " forms");
-    log("Published", data.companies.length, "companies and", S.published.tracks, "tracks");
+    pubEvent("publish", "Published to the website", data.companies.length + " companies, " + data.forms.length + " forms");
+    log("Published", data.companies.length, "companies");
     return S.published;
   })();
 }
@@ -1601,11 +1604,14 @@ function trfOpens(days) {
   for (const [k, d] of Object.entries(T.days)) k >= from && (n += d.open || 0);
   return n;
 }
-function bizWeeks(S, slug) {
+// (1.36.0) prices ($ per week, set by the owner) and the ad of the week
+const bizPrices = (S) => ({ week: Math.max(0, Math.min(9999, +(S.prices && S.prices.week) || 5)), ad: Math.max(0, Math.min(9999, +(S.prices && S.prices.ad) || 15)) });
+const adNow = (S) => (S.ads || []).find((w) => w.status === "paid" && w.from === monOf(Date.now()));
+function bizWeeks(S, slug, list) {
   const out = [], now = Date.now();
   for (let i = 0; i < 10; i++) {
     const from = monOf(now + i * 7 * 864e5 + 3600e3),
-      all = (S.weeks || []).filter((w) => w.from === from && w.status !== "no"),
+      all = (list || S.weeks || []).filter((w) => w.from === from && w.status !== "no"),
       paid = all.find((w) => w.status === "paid"),
       mine = all.find((w) => w.slug === slug);
     out.push({ from, until: weekEnd(from), state: paid ? (paid.slug === slug ? "mine" : "taken") : mine ? "asked" : "free", ref: mine && mine.status === "new" ? mine.ref : "" });
@@ -1740,10 +1746,27 @@ async function bizRoute(req, res, what) {
         media: { gallery: co.gallery || [], bg: co.bg || "", videos: co.videos || [] },
         stats: { views7: trfSum("co", co.slug, 7), views30: trfSum("co", co.slug, 30), msgs30: trfSum("msg", co.slug, 30), stamps30: trfSum("stamp", co.slug, 30), opens30: trfOpens(30) },
         weeks: bizWeeks(S, co.slug), weekInfo: sup.weekInfo || "", week: weekNow(S) && weekNow(S).slug === co.slug,
+        ads: bizWeeks(S, co.slug, S.ads), ad: co.ad || null, adEdit: ed && ed.ad ? ed.ad : null, adNow: !!(adNow(S) && adNow(S).slug === co.slug), prices: bizPrices(S),
       });
     }
     const app = S.responses.find((r) => r.ownerEmail === who.email && r.status === "new");
     return json(res, 200, { state: app ? "pending" : "none", email: who.email, name: who.name, at: app ? app.at : 0 });
+  }
+  if (what === "claim") {
+    if (co) return fail(res, 400, "This Google account already has a business page.");
+    const bad = (S.claimFails = S.claimFails || {}), now = Date.now(), f = bad[who.id] || { n: 0, at: now };
+    if (now - f.at > 36e5) { f.n = 0; f.at = now; }
+    if (f.n >= 8) return fail(res, 429, "Too many wrong codes. Try again in an hour, or ask the owner for a new one.");
+    const code = String(b.code || "").toUpperCase().replace(/[^A-Z0-9]/g, ""), h = sha("claim:" + code),
+      cl = code.length >= 8 && (S.claims || []).find((x) => x.h === h && !x.used && x.exp > now),
+      c2 = cl && S.companies.find((x) => x.slug === cl.slug);
+    if (!cl || !c2) { f.n++; bad[who.id] = f; pubSave(); return fail(res, 400, "That code isn't right, or it has run out. Ask the owner for a new one."); }
+    c2.owners = [...new Set([...(c2.owners || []), who.email])].slice(0, 5);
+    cl.used = now; cl.by = who.email;
+    delete bad[who.id];
+    pubSave();
+    pubEvent("company", c2.name + " was claimed", who.email + " used the claim code and now signs in for " + c2.name + ".", c2.id);
+    return json(res, 200, { ok: !0, state: "company" });
   }
   if (what === "apply") {
     if (co) return fail(res, 400, "This Google account already has a business page.");
@@ -1786,8 +1809,9 @@ async function bizRoute(req, res, what) {
         }).filter(Boolean);
       }
     }
+    const prevEd = (S.bizEdits || []).find((x) => x.slug === co.slug);
     S.bizEdits = (S.bizEdits || []).filter((x) => x.slug !== co.slug);
-    S.bizEdits.push({ id: id36(), slug: co.slug, name: co.name, by: who.email, at: Date.now(), fields: f, logo, media });
+    S.bizEdits.push({ id: id36(), slug: co.slug, name: co.name, by: who.email, at: Date.now(), fields: f, logo, media, ad: prevEd && prevEd.ad });
     pubSave();
     pubEvent("form", "Edit to check: " + co.name, "The business changed its card. Check it on the Rig tab, then publish.", "biz");
     return json(res, 200, { ok: !0 });
@@ -1801,17 +1825,39 @@ async function bizRoute(req, res, what) {
     pubSave();
     return json(res, 200, { file });
   }
-  if (what === "week") {
-    const wk = bizWeeks(S, co.slug).find((w) => w.from === String(b.week || ""));
-    if (!wk) return fail(res, 400, "Pick one of the weeks shown.");
-    if (wk.state === "taken") return fail(res, 400, "That week is already taken.");
-    if (wk.state === "mine" || wk.state === "asked") return fail(res, 400, "You already asked for that week.");
+  if (what === "week" || what === "ad") {
+    // one or several weeks at once (paying in advance): they share one reference code, and the owner marks them all paid together
+    const key = what === "ad" ? "ads" : "weeks", list = (S[key] = S[key] || []), pr = bizPrices(S)[what === "ad" ? "ad" : "week"],
+      asked = [...new Set((Array.isArray(b.weeks) ? b.weeks : [b.week]).map((x) => String(x || "")))].slice(0, 8), cal = bizWeeks(S, co.slug, list);
+    if (!asked.length || !asked[0]) return fail(res, 400, "Pick a week.");
+    if (what === "ad" && !(co.ad && co.ad.title)) return fail(res, 400, "Write your ad and send it for approval first. Then you can book a week for it.");
+    for (const f of asked) {
+      const wk = cal.find((w) => w.from === f);
+      if (!wk) return fail(res, 400, "Pick one of the weeks shown.");
+      if (wk.state === "taken") return fail(res, 400, "The week of " + f + " is already taken.");
+      if (wk.state === "mine" || wk.state === "asked") return fail(res, 400, "You already asked for the week of " + f + ".");
+    }
     let ref;
-    do ref = "W" + crypto.randomBytes(3).toString("hex").toUpperCase(); while ((S.weeks || []).some((w) => w.ref === ref));
-    (S.weeks = S.weeks || []).push({ id: id36(), slug: co.slug, name: co.name, from: wk.from, at: Date.now(), ref, status: "new", by: who.email });
+    do ref = (what === "ad" ? "A" : "W") + crypto.randomBytes(3).toString("hex").toUpperCase(); while (list.some((w) => w.ref === ref));
+    const grp = id36();
+    for (const f of asked) list.push({ id: id36(), slug: co.slug, name: co.name, from: f, at: Date.now(), ref, grp, price: pr, status: "new", by: who.email });
     pubSave();
-    pubEvent("form", "Company of the week asked for: " + co.name, "Week of " + wk.from + " · reference " + ref + ". Mark it paid on the Rig tab once the payment arrives.", "biz");
-    return json(res, 200, { ok: !0, ref, weeks: bizWeeks(S, co.slug) });
+    pubEvent("form", (what === "ad" ? "Ad asked for: " : "Company of the week asked for: ") + co.name, asked.length + " week" + (asked.length > 1 ? "s" : "") + " from " + asked[0] + " · $" + pr * asked.length + " · reference " + ref + ". Mark it paid on the Rig tab once the payment arrives.", "biz");
+    return json(res, 200, { ok: !0, ref, total: pr * asked.length, weeks: bizWeeks(S, co.slug), ads: bizWeeks(S, co.slug, S.ads) });
+  }
+  if (what === "adsave") {
+    // the ad itself (headline, short text, picture, button) waits for the owner's approval like every other edit
+    const a2 = b.ad || {}, up = S.bizUp || {}, img = /^[0-9a-f]{16}\.(png|jpg|webp)$/.test(a2.img || "") && ((up[a2.img] && up[a2.img].slug === co.slug) || (co.ad && co.ad.img === a2.img)) ? a2.img : "",
+      ad = { title: clip(a2.title, 60).trim(), text: clip(a2.text, 140).trim(), btn: clip(a2.btn, 20).trim() || "Visit", link: webUrl(a2.link), img };
+    if (!ad.title) return fail(res, 400, "Write a headline for the ad.");
+    if (!ad.link) return fail(res, 400, "Add the web address the button opens (it starts with https://).");
+    S.bizEdits = S.bizEdits || [];
+    let ed = S.bizEdits.find((x) => x.slug === co.slug);
+    if (!ed) { ed = { id: id36(), slug: co.slug, name: co.name, by: who.email, at: Date.now(), fields: {}, logo: "", media: null }; S.bizEdits.push(ed); }
+    ed.ad = ad; ed.at = Date.now();
+    pubSave();
+    pubEvent("form", "Ad to check: " + co.name, "The business wrote an ad. Check it on the Rig tab, then publish.", "biz");
+    return json(res, 200, { ok: !0 });
   }
   return fail(res, 404, "Not here.");
 }
@@ -2203,7 +2249,7 @@ async function inboxRoute(req, res) {
   }
   if (req.method === "POST" && url.pathname === "/pair") return json(res, 200, pairUse(req, await jsonBody(req, 2000)));
   if (req.method === "POST" && /^\/acct\/(google|load|save|delete|ping)$/.test(url.pathname)) return acctRoute(req, res, url.pathname.slice(6));
-  if (req.method === "POST" && /^\/biz\/(me|apply|save|week|pic)$/.test(url.pathname)) return bizRoute(req, res, url.pathname.slice(5));
+  if (req.method === "POST" && /^\/biz\/(me|apply|claim|save|week|ad|adsave|pic)$/.test(url.pathname)) return bizRoute(req, res, url.pathname.slice(5));
   if (req.method === "POST" && url.pathname === "/biz/up") return bizUp(req, res, url);
   if (req.method === "GET" && /^\/(pm|v)\/[0-9a-z.]{16,40}$/.test(url.pathname)) return bizServe(req, res, url);
   if (req.method === "POST" && /^\/chat\/(join|list|send|del)$/.test(url.pathname)) return chatPubRoute(req, res, url.pathname.slice(6));
@@ -2258,7 +2304,7 @@ async function inboxRoute(req, res) {
     log("Form:", f.title, "·", who);
     trfHit("sent", f.slug);
     const bud = (r.items.find((x) => x.map === "budget") || {}).value;
-    pubNotify(f.kind === "company" ? "New company sign-up" : f.kind === "artist" ? "New artist sign-up" : "New answer: " + f.title, String(who) + (bud && !/^Basic/.test(bud) ? " · promotion budget: " + bud : ""), "form", r.id, f.kind === "company" ? [["approve", "Approve"], ["decline", "Turn down"]] : [["done", "Done"]]);
+    pubNotify(f.kind === "company" ? "New company sign-up" : "New answer: " + f.title, String(who) + (bud && !/^Basic/.test(bud) ? " · promotion budget: " + bud : ""), "form", r.id, f.kind === "company" ? [["approve", "Approve"], ["decline", "Turn down"]] : [["done", "Done"]]);
     return json(res, 200, { ok: !0 });
   }
   if (S.msgs.length >= 1000) return fail(res, 503, "Messages are full right now. Try again later.");
@@ -2272,13 +2318,13 @@ async function inboxRoute(req, res) {
   pubNotify("Message for " + c.name, (m.name ? m.name + ": " : "") + m.text.slice(0, 120), "message", m.id, [["done", "Passed on"]]);
   return json(res, 200, { ok: !0 });
 }
-// what the owner (everything) or the Spotlight artist (the artist and the tracks) gets
+// what the owner gets
 function pubView(u) {
   const S = pubLoad();
   if (u.role === "owner")
     return Object.assign({}, S, {
       pairs: DV.devices.filter((d) => d.user === u.id && d.pairReq && !d.remote).map((d) => ({ id: d.id, name: d.name, at: d.pairReq })), publish: C.publish ? { repo: C.publish.repo, branch: C.publish.branch, key: !!ghTok(), keyErr: C.publish.keyErr || "" } : null, inbox: { on: !!C.inbox, url: C.inboxUrl || "", ok: IBH.ok, msg: IBH.msg, at: IBH.at, moved: !!S.inboxMoved }, owner: !0, dirty: (S.changedAt || 0) > ((S.published && S.published.at) || 0), events: (S.events || []).slice(0, 40), responses: (S.responses || []).slice(0, 300) });
-  return { artist: S.artist, tracks: S.tracks, owner: !1 };
+  return { owner: !1 };
 }
 
 // ---- forms: Workbench's own Google Forms (1.4.0) ----------------------------------------------------
@@ -2318,15 +2364,6 @@ function formDefaults() {
       ],
     },
     { id: id36(), slug: "contact", kind: "contact", title: "Contact Workbench", desc: "Write to us. We'll get back to you.", open: !1, fields: [fld("short", "Your name"), fld("short", "How to reach you", 1, "", "Phone or email"), fld("long", "Message", 1)] },
-    {
-      id: id36(),
-      slug: "artist-sign-up",
-      kind: "artist",
-      title: "Be on Spotlight",
-      desc: "Make music? Tell us about it, and where we can hear it.",
-      open: !1,
-      fields: [fld("short", "Artist name", 1), fld("short", "How to reach you", 1, "", "Phone or email"), fld("link", "Where we can hear you", 0, "", "SoundCloud, YouTube, Instagram…"), fld("long", "About you"), fld("image", "A photo")],
-    },
   ];
 }
 function formSlug(title, id) {
@@ -2346,7 +2383,7 @@ function formSave(b) {
   f.title = title;
   "desc" in b && (f.desc = clip(b.desc, 1000));
   "open" in b && (f.open = !!b.open);
-  "kind" in b && (f.kind = ["company", "contact", "artist", "custom"].includes(b.kind) ? b.kind : "custom");
+  "kind" in b && (f.kind = ["company", "contact", "custom"].includes(b.kind) ? b.kind : "custom");
   if ("fields" in b) {
     const F = [].concat(b.fields || []).slice(0, 40);
     f.fields = F.map((x) => ({
@@ -2987,12 +3024,12 @@ async function route(req, res) {
       log("AI", b.do || "unload", m);
       return json(res, 200, { ok: !0, ai: await aiInfo() });
     }
-    // ---- Discover and Spotlight (the owner; the Spotlight artist for the music)
+    // ---- Discover (the owner)
     case "/api/pub":
-      if (!owner && !u.artist) return fail(res, 403, "Only the owner and the Spotlight artist.");
+      if (!owner) return fail(res, 403, "Only the owner.");
       return json(res, 200, pubView(u));
     case "/api/pub/media": {
-      if (!owner && !u.artist) return fail(res, 403, "Only the owner and the Spotlight artist.");
+      if (!owner) return fail(res, 403, "Only the owner.");
       const f = String(url.searchParams.get("f") || "");
       if (!/^[0-9a-f]{16}\.[a-z0-9]+$/.test(f)) return fail(res, 400, "No such file.");
       return sendFile(req, res, path.join(PUBDIR(), f));
@@ -3010,47 +3047,13 @@ async function route(req, res) {
     }
     case "/api/pub/file": {
       if (M !== "PUT" && M !== "POST") break;
-      const kind = url.searchParams.get("kind"),
-        forId = url.searchParams.get("for") || "",
+      const forId = url.searchParams.get("for") || "",
         S = pubLoad();
-      if (!["logo", "photo", "cover", "song"].includes(kind)) return fail(res, 400, "What kind of file?");
-      if (kind === "logo" ? !owner : !(owner || u.artist)) return fail(res, 403, "That isn't yours to change.");
-      const t = kind === "cover" && S.tracks.find((x) => x.id === forId),
-        co = kind === "logo" && S.companies.find((x) => x.id === forId);
-      if (kind === "cover" && (!t || (!owner && t.by !== u.id))) return fail(res, 404, "No such track.");
-      if (kind === "logo" && !co) return fail(res, 404, "No such company.");
-      const file = await pubFile(req, url.searchParams.get("name"), kind === "song" ? "song" : "img");
-      if (kind === "logo") co.logo = file;
-      else if (kind === "photo") S.artist.photo = file;
-      else if (kind === "cover") t.cover = file;
-      else S.tracks.push({ id: id36(), title: clip(url.searchParams.get("title") || path.parse(String(url.searchParams.get("name") || "Track")).name, 100), file, dur: Math.max(0, Math.min(3600, +url.searchParams.get("dur") || 0)), status: owner ? "approved" : "pending", by: u.id, byName: u.name, at: Date.now() });
-      pubSave();
-      kind === "song" && !owner && pubNotify("A Spotlight song to approve", u.name + " added a song.", "track");
-      return json(res, 200, pubView(u));
-    }
-    case "/api/pub/track": {
-      const S = pubLoad(),
-        b = M === "DELETE" ? { id: url.searchParams.get("id") } : await jsonBody(req, 2e4),
-        t = S.tracks.find((x) => x.id === b.id);
-      if (!t || !(owner || (u.artist && t.by === u.id))) return fail(res, 404, "No such track.");
-      if (M === "DELETE") {
-        if (!owner && t.status === "approved") return fail(res, 403, "Ask the owner to take down a track that's already approved.");
-        S.tracks = S.tracks.filter((x) => x !== t);
-      } else {
-        "title" in b && (t.title = clip(b.title, 100) || t.title);
-        "dur" in b && (t.dur = Math.max(0, Math.min(3600, +b.dur || 0)));
-        owner && "status" in b && (t.status = b.status === "approved" ? "approved" : "pending");
-      }
-      pubSave();
-      return json(res, 200, pubView(u));
-    }
-    case "/api/pub/artist": {
-      if (!owner && !u.artist) return fail(res, 403, "Only the owner and the Spotlight artist.");
-      const b = await jsonBody(req, 2e4),
-        A = pubLoad().artist;
-      "name" in b && (A.name = clip(b.name, 80));
-      "bio" in b && (A.bio = clip(b.bio, 1500));
-      "socials" in b && (A.socials = socialsOf(b.socials));
+      if (url.searchParams.get("kind") !== "logo") return fail(res, 400, "What kind of file?");
+      if (!owner) return fail(res, 403, "That isn't yours to change.");
+      const co = S.companies.find((x) => x.id === forId);
+      if (!co) return fail(res, 404, "No such company.");
+      co.logo = await pubFile(req, url.searchParams.get("name"), "img");
       pubSave();
       return json(res, 200, pubView(u));
     }
@@ -3277,7 +3280,6 @@ async function route(req, res) {
       if (M === "POST") {
         const b = await jsonBody(req, 1e4);
         const nu = addUser(b.name, b.pin, "member", !!b.work);
-        b.artist && ((nu.artist = !0), saveUsers());
         log("Added", nu.name);
         return json(res, 200, { user: pub(nu) });
       }
@@ -3289,7 +3291,6 @@ async function route(req, res) {
         if (M === "PATCH") {
           "work" in b && (x.work = !!b.work);
           "browser" in b && ((x.browser = !!b.browser), !x.browser && BRW && BRW.stop("Turned off by the owner.", x.id));
-          "artist" in b && (x.artist = !!b.artist);
           b.pin && setPin(x, b.pin);
           saveUsers();
           return json(res, 200, { user: pub(x) });
@@ -3631,19 +3632,26 @@ async function route(req, res) {
             "bg" in md && (c.bg = md.bg || "");
             md.videos && (c.videos = md.videos);
           }
+          e.ad && (c.ad = e.ad);
           c.u = Date.now();
           pubEvent("company", c.name + " changed its card", "Publish to put it on the website.", c.id);
         }
         S.bizEdits = S.bizEdits.filter((x) => x.id !== e.id);
       } else if (b.act === "paid" || b.act === "no") {
-        const w = S.weeks.find((x) => x.id === b.id);
+        // company of the week (S.weeks) or the ad (S.ads, kind "ad"); weeks asked together (paying in advance) are decided together
+        S.ads ||= [];
+        const list = b.kind === "ad" ? S.ads : S.weeks,
+          w = list.find((x) => x.id === b.id);
         if (!w) return fail(res, 404, "No such request.");
+        const grp = w.grp ? list.filter((x) => x.grp === w.grp && x.status === "new") : [w];
         if (b.act === "paid") {
-          if (S.weeks.some((x) => x.from === w.from && x.status === "paid" && x.id !== w.id)) return fail(res, 400, "Another business already has that week.");
-          w.status = "paid";
-          w.paidAt = Date.now();
-          pubEvent("company", w.name + " is company of the week", "Week of " + w.from + ". Publish to show it.", w.id);
-        } else w.status = "no";
+          for (const x of grp) if (list.some((y) => y.from === x.from && y.status === "paid" && y.id !== x.id)) return fail(res, 400, "Another business already has the week of " + x.from + ".");
+          for (const x of grp) {
+            x.status = "paid";
+            x.paidAt = Date.now();
+          }
+          pubEvent("company", w.name + (b.kind === "ad" ? " has the ad" : " is company of the week"), grp.length + " week" + (grp.length > 1 ? "s" : "") + " from " + grp[0].from + ". Publish to show it.", w.id);
+        } else for (const x of grp) x.status = "no";
       } else if (b.act === "setweek") {
         const c = S.companies.find((x) => x.slug === b.slug);
         if (!c) return fail(res, 404, "No such company.");
@@ -3654,6 +3662,20 @@ async function route(req, res) {
         S.defaultCo = b.slug && S.companies.some((x) => x.slug === b.slug) ? b.slug : "";
       } else if (b.act === "clearweek") {
         S.weeks.forEach((x) => x.slug === b.slug && x.status === "paid" && x.from === monOf(Date.now()) && (x.status = "no"));
+      } else if (b.act === "claim") {
+        // a one-time code that links a Google account to a company that is already listed (shown once; kept only as a scramble)
+        const c = S.companies.find((x) => x.slug === b.slug);
+        if (!c) return fail(res, 404, "No such company.");
+        const AL = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+        let tail = "";
+        for (const by of crypto.randomBytes(6)) tail += AL[by % AL.length];
+        const pre = (c.name || "").normalize("NFD").replace(/[^A-Za-z0-9]/g, "").toUpperCase().slice(0, 8) || "BIZ",
+          code = pre + "-" + tail;
+        S.claims = (S.claims || []).filter((x) => !x.used && x.exp > Date.now() && x.slug !== c.slug).concat({ id: id36(), slug: c.slug, h: sha("claim:" + code.replace(/-/g, "")), pre, at: Date.now(), exp: Date.now() + 14 * 864e5 });
+        pubSave();
+        return json(res, 200, Object.assign({}, pubView(u), { claimCode: code, claimDays: 14 }));
+      } else if (b.act === "prices") {
+        S.prices = { week: Math.max(0, Math.min(9999, Math.round(+b.week || 0))), ad: Math.max(0, Math.min(9999, Math.round(+b.ad || 0))) };
       } else if (b.act === "owners") {
         const c = S.companies.find((x) => x.slug === b.slug);
         if (!c) return fail(res, 404, "No such company.");
