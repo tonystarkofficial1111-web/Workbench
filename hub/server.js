@@ -18,7 +18,7 @@ const http = require("http"),
   { readTags } = require("./tags.js"),
   { __wbReminders } = require("./reminders.js");
 
-const VERSION = "1.37.0";
+const VERSION = "1.38.0";
 const HOME = process.env.WB_HUB_HOME || path.join(__dirname, "..");
 const CONF = process.env.WB_HUB_CONFIG || path.join(HOME, "hub.json");
 const APP = "https://tonystarkofficial1111-web.github.io";
@@ -1732,23 +1732,25 @@ function bizServe(req, res, url) {
   rs.on("error", end);
   rs.on("end", end);
 }
+// (1.38.0) what a company's Business Workbench shows; also used for the owner's preview of it
+function bizMeOf(S, co, email) {
+  const ed = (S.bizEdits || []).find((x) => x.slug === co.slug) || null,
+    sup = S.support || {};
+  return {
+        state: "company", email,
+        company: { slug: co.slug, name: co.name, category: co.category || "", description: co.description || "", city: co.city || "", address: co.address || "", phone: co.phone || "", email: co.email || "", website: co.website || "", socials: co.socials || {}, deal: co.deal || "", code: co.code || "", logo: co.logo ? "media/" + co.logo : "", live: co.live !== !1 },
+        edit: ed && { at: ed.at, fields: ed.fields, logo: !!ed.logo, media: ed.media || null },
+        media: { gallery: co.gallery || [], bg: co.bg || "", videos: co.videos || [] },
+        stats: { views7: trfSum("co", co.slug, 7), views30: trfSum("co", co.slug, 30), adViews30: trfSum("adv", co.slug, 30), adClicks30: trfSum("adc", co.slug, 30), msgs30: trfSum("msg", co.slug, 30), stamps30: trfSum("stamp", co.slug, 30), opens30: trfOpens(30) },
+        weeks: bizWeeks(S, co.slug), weekInfo: sup.weekInfo || "", week: weekNow(S) && weekNow(S).slug === co.slug,
+        ads: bizWeeks(S, co.slug, S.ads), ad: co.ad || null, adEdit: ed && ed.ad ? ed.ad : null, adNow: !!(adNow(S) && adNow(S).slug === co.slug), prices: bizPrices(S),
+      };
+}
 async function bizRoute(req, res, what) {
   acctLimit(req, 240);
   const b = await jsonBody(req, 2.2e6), who = bizWho(b), S = pubLoad(), co = bizCo(S, who.email);
   if (what === "me") {
-    if (co) {
-      const ed = (S.bizEdits || []).find((x) => x.slug === co.slug) || null,
-        sup = S.support || {};
-      return json(res, 200, {
-        state: "company", email: who.email,
-        company: { slug: co.slug, name: co.name, category: co.category || "", description: co.description || "", city: co.city || "", address: co.address || "", phone: co.phone || "", email: co.email || "", website: co.website || "", socials: co.socials || {}, deal: co.deal || "", code: co.code || "", logo: co.logo ? "media/" + co.logo : "", live: co.live !== !1 },
-        edit: ed && { at: ed.at, fields: ed.fields, logo: !!ed.logo, media: ed.media || null },
-        media: { gallery: co.gallery || [], bg: co.bg || "", videos: co.videos || [] },
-        stats: { views7: trfSum("co", co.slug, 7), views30: trfSum("co", co.slug, 30), msgs30: trfSum("msg", co.slug, 30), stamps30: trfSum("stamp", co.slug, 30), opens30: trfOpens(30) },
-        weeks: bizWeeks(S, co.slug), weekInfo: sup.weekInfo || "", week: weekNow(S) && weekNow(S).slug === co.slug,
-        ads: bizWeeks(S, co.slug, S.ads), ad: co.ad || null, adEdit: ed && ed.ad ? ed.ad : null, adNow: !!(adNow(S) && adNow(S).slug === co.slug), prices: bizPrices(S),
-      });
-    }
+    if (co) return json(res, 200, bizMeOf(S, co, who.email));
     const app = S.responses.find((r) => r.ownerEmail === who.email && r.status === "new"),
       lk = (S.linkReqs || []).find((x) => x.email === who.email && x.status === "new");
     return json(res, 200, { state: app ? "pending" : lk ? "linkwait" : "none", email: who.email, name: who.name, at: app ? app.at : lk ? lk.at : 0, link: lk ? { name: lk.name, at: lk.at } : null });
@@ -1965,7 +1967,7 @@ function trfHit(kind, slug) {
     d = (T.days[dayKey()] = T.days[dayKey()] || { open: 0, ref: {}, form: {}, co: {}, sent: {}, msg: {}, stamp: {}, trail: {} });
   if (kind === "open") d.open++;
   // (1.17.0) also: which game was opened, clips saved, sign-ins and shares: anonymous counts, the kind and the name only
-  else if (["ref", "form", "co", "sent", "msg", "stamp", "trail", "play", "clip", "signin", "share"].includes(kind) && /^[a-z0-9-]{1,60}$/.test(slug)) {
+  else if (["ref", "form", "co", "sent", "msg", "stamp", "trail", "play", "clip", "signin", "share", "adv", "adc"].includes(kind) && /^[a-z0-9-]{1,60}$/.test(slug)) {
     const m = d[kind] || (d[kind] = {});
     if (Object.keys(m).length < 300 || m[slug]) m[slug] = (m[slug] || 0) + 1;
   } else return;
@@ -3712,6 +3714,11 @@ async function route(req, res) {
         if (!r) return fail(res, 404, "No such idea.");
         r.status = b.do === "del" ? "gone" : "seen";
         S.ideas = S.ideas.filter((x) => x.status !== "gone");
+      } else if (b.act === "preview") {
+        // the owner looks at a company's Business Workbench exactly as the company sees it (read only, nothing is sent from it)
+        const c = S.companies.find((x) => x.slug === b.slug);
+        if (!c) return fail(res, 404, "No such company.");
+        return json(res, 200, { preview: Object.assign(bizMeOf(S, c, (c.owners || [])[0] || "(no Google account yet)"), { preview: !0 }) });
       } else if (b.act === "claim") {
         // a one-time code that links a Google account to a company that is already listed (shown once; kept only as a scramble)
         const c = S.companies.find((x) => x.slug === b.slug);
