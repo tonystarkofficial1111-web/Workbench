@@ -18,7 +18,7 @@ const http = require("http"),
   { readTags } = require("./tags.js"),
   { __wbReminders } = require("./reminders.js");
 
-const VERSION = "1.38.0";
+const VERSION = "1.38.1";
 const HOME = process.env.WB_HUB_HOME || path.join(__dirname, "..");
 const CONF = process.env.WB_HUB_CONFIG || path.join(HOME, "hub.json");
 const APP = "https://tonystarkofficial1111-web.github.io";
@@ -1599,7 +1599,7 @@ function bizClean(b) {
   return o;
 }
 function trfOpens(days) {
-  const T = trfLoad(), from = dayKey(Date.now() - days * 864e5);
+  const T = trfLoad(), from = dayKey(Date.now() - (days - 1) * 864e5);
   let n = 0;
   for (const [k, d] of Object.entries(T.days)) k >= from && (n += d.open || 0);
   return n;
@@ -1979,7 +1979,7 @@ function trfHit(kind, slug) {
 // the last N days of one counter for one company or form
 function trfSum(kind, slug, days) {
   const T = trfLoad(),
-    from = dayKey(Date.now() - days * 864e5);
+    from = dayKey(Date.now() - (days - 1) * 864e5);
   let n = 0;
   for (const [k, d] of Object.entries(T.days)) k >= from && (n += (d[kind] && d[kind][slug]) || 0);
   return n;
